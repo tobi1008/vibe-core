@@ -1,20 +1,20 @@
 name: Deploy Vibe Core API
 
-   on:
-     push:
-       branches:
-         - main
+on:
+  push:
+    branches:
+      - main
 
-   jobs:
-     deploy:
-       runs-on: ubuntu-latest
-       steps:
-         - name: SSH into VPS and trigger update script
-           uses: appleboy/ssh-action@v1.0.3
-           with:
-             host: ${{ secrets.VPS_HOST }}
-             username: ${{ secrets.VPS_USER }}
-             password: ${{ secrets.VPS_PASSWORD }}
-             port: 2210  # Đã đổi thành port SSH tùy chỉnh của bạn
-             script: |
-               /opt/vibe-hosting/update.sh
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH into VPS and trigger update script
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          port: 2210
+          script: |
+            /opt/vibe-hosting/update.sh
