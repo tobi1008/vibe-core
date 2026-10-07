@@ -33,6 +33,31 @@ FALLBACK_MODELS = AGY_MODELS
 HERMES_API_URL = ""
 HEADERS = {}
 
+def get_agy_bin() -> str:
+    """Tự động tìm kiếm đường dẫn tuyệt đối của binary agy trên máy chủ"""
+    env_bin = os.getenv("AGY_BIN_PATH")
+    if env_bin and os.path.exists(env_bin):
+        return env_bin
+    
+    which_bin = shutil.which("agy")
+    if which_bin:
+        return which_bin
+
+    candidate_paths = [
+        "/usr/local/bin/agy",
+        "/usr/bin/agy",
+        "/root/.local/bin/agy",
+        "/root/.gemini/bin/agy",
+        "/root/.gemini/antigravity-cli/bin/agy",
+        os.path.expanduser("~/.local/bin/agy"),
+        os.path.expanduser("~/.gemini/bin/agy"),
+        os.path.expanduser("~/.gemini/antigravity-cli/bin/agy"),
+    ]
+    for p in candidate_paths:
+        if os.path.exists(p) and os.access(p, os.X_OK):
+            return p
+    return "agy"
+
 def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 90, preferred_model: Optional[str] = None) -> str:
     """
     Thực thi prompt thông qua Antigravity CLI (agy) trực tiếp trên máy chủ.
@@ -43,12 +68,27 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
         if m not in models_to_try:
             models_to_try.append(m)
 
+    agy_bin = get_agy_bin()
+    # Bổ sung PATH để service systemd luôn tìm thấy các thư mục bin phổ biến
+    custom_env = os.environ.copy()
+    extra_dirs = [
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/root/.local/bin",
+        "/root/.gemini/bin",
+        "/root/.gemini/antigravity-cli/bin",
+        os.path.expanduser("~/.local/bin"),
+        os.path.expanduser("~/.gemini/bin"),
+    ]
+    custom_env["PATH"] = ":".join(extra_dirs) + ":" + custom_env.get("PATH", "")
+
     last_err = ""
     for model_name in models_to_try:
         try:
             write_log(app_name, f"🤖 [Antigravity AI] Đang gửi yêu cầu tới Model [{model_name}]...")
             cmd = [
-                "agy",
+                agy_bin,
                 "-p", prompt,
                 "--model", model_name,
                 "--dangerously-skip-permissions"
@@ -58,7 +98,8 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
                 cwd=cwd,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                env=custom_env
             )
             if res.returncode == 0 and res.stdout.strip():
                 write_log(app_name, f"✅ [Antigravity AI] Model [{model_name}] phản hồi thành công!")
@@ -71,7 +112,7 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
             write_log(app_name, f"⚠️ Model [{model_name}] quá thời gian chờ ({timeout}s). Chuyển model dự phòng...")
             last_err = f"Timeout {timeout}s"
         except Exception as e:
-            write_log(app_name, f"⚠️ Lỗi thực thi agy với [{model_name}]: {str(e)}")
+            write_log(app_name, f"⚠️ Lỗi thực thi agy ({agy_bin}) với [{model_name}]: {str(e)}")
             last_err = str(e)
 
     raise Exception(f"Tất cả các Model Antigravity đều không phản hồi: {last_err}")
