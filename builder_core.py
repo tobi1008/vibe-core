@@ -6,6 +6,7 @@ import requests
 import shutil
 import re
 import time
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,21 +19,78 @@ DOCKER_USER = "tobi1008"
 DOCKER_PASSWORD = os.getenv("DOCKER_PASSWORD")
 BASE_WORKSPACE = "/opt/vibe-hosting/workspaces"
 LOGS_DIR = "/opt/vibe-hosting/logs"
-D1 = "127.0.0.1"
-HERMES_API_URL = f"http://{D1}:8645/v1/chat/completions"
-HEADERS = {
-    "Content-Type": "application/json",
-    "Authorization": f"Bearer {os.getenv('INTERNAL_BEARER_TOKEN')}"
-}
 
-# DANH SÁCH AI MODEL DỰ PHÒNG MỚI NHẤT
-FALLBACK_MODELS = [
-    "stepfun/step-3.7-flash:free",
-    "poolside/laguna-s-2.1:free",
-    "meituan/longcat-2.5-preview:free",
-    "inclusionai/ling-3.0-flash-sante:free",
-    "poolside/laguna-xs-2.1:free"
+# ==========================================
+# CẤU HÌNH ANTIGRAVITY AI (GEMINI FLASH)
+# ==========================================
+AGY_MODELS = [
+    "gemini-3.8-flash-high",
+    "gemini-3.8-flash-medium",
+    "gemini-3.7-flash-high",
+    "gemini-3.7-flash-medium",
 ]
+FALLBACK_MODELS = AGY_MODELS
+HERMES_API_URL = ""
+HEADERS = {}
+
+def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 90, preferred_model: Optional[str] = None) -> str:
+    """
+    Thực thi prompt thông qua Antigravity CLI (agy) trực tiếp trên máy chủ.
+    Tự động fallback giữa các phiên bản Gemini Flash.
+    """
+    models_to_try = [preferred_model] if preferred_model and preferred_model in AGY_MODELS else []
+    for m in AGY_MODELS:
+        if m not in models_to_try:
+            models_to_try.append(m)
+
+    last_err = ""
+    for model_name in models_to_try:
+        try:
+            write_log(app_name, f"🤖 [Antigravity AI] Đang gửi yêu cầu tới Model [{model_name}]...")
+            cmd = [
+                "agy",
+                "-p", prompt,
+                "--model", model_name,
+                "--dangerously-skip-permissions"
+            ]
+            res = subprocess.run(
+                cmd,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                write_log(app_name, f"✅ [Antigravity AI] Model [{model_name}] phản hồi thành công!")
+                return res.stdout.strip()
+            else:
+                err_detail = res.stderr.strip() or f"Exit code {res.returncode}"
+                write_log(app_name, f"⚠️ Model [{model_name}] gặp sự cố ({err_detail}). Đang chuyển model dự phòng...")
+                last_err = err_detail
+        except subprocess.TimeoutExpired:
+            write_log(app_name, f"⚠️ Model [{model_name}] quá thời gian chờ ({timeout}s). Chuyển model dự phòng...")
+            last_err = f"Timeout {timeout}s"
+        except Exception as e:
+            write_log(app_name, f"⚠️ Lỗi thực thi agy với [{model_name}]: {str(e)}")
+            last_err = str(e)
+
+    raise Exception(f"Tất cả các Model Antigravity đều không phản hồi: {last_err}")
+
+def run_agy_json(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 90, preferred_model: Optional[str] = None) -> dict:
+    """
+    Gọi agy và bóc tách dữ liệu JSON an toàn từ kết quả trả về.
+    """
+    raw_output = run_agy_prompt(prompt, app_name=app_name, cwd=cwd, timeout=timeout, preferred_model=preferred_model)
+    json_match = re.search(r'\{.*\}', raw_output, re.DOTALL)
+    if json_match:
+        clean_json = json_match.group(0)
+    else:
+        clean_json = raw_output.strip()
+        clean_json = re.sub(r"^`{1,3}(?:json)?\s*", "", clean_json, flags=re.IGNORECASE)
+        clean_json = re.sub(r"\s*`{1,3}$", "", clean_json)
+
+    clean_json = re.sub(r'\\(?![/"\\bfnrtu])', r'\\\\', clean_json)
+    return json.loads(clean_json)
 
 def write_log(app_name, message):
     os.makedirs(LOGS_DIR, exist_ok=True)
@@ -175,64 +233,17 @@ QUY ĐỊNH K3S YAML (CẤM TỰ CHẾ TÊN & CẤM DÙNG NGINX):
         - {app_domain}
         secretName: {app_name}-tls
 """
+            full_prompt = f"{system_prompt}\n\nĐây là mã nguồn:\n{code_context}"
             if build_error:
-                system_prompt += f"\n\n[CẢNH BÁO TỪ HỆ THỐNG]: Lần Build trước thất bại với log:\n{build_error}\n\nHãy sửa nixpacks.toml hoặc mã nguồn cho đúng, CHỈ TRẢ VỀ JSON, KHÔNG DÙNG TOOL!"
-
-            payload = {
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Đây là mã nguồn:\n{code_context}"}
-                ]
-            }
-
-            api_success = False
-            response = None
-
-            for model_name in FALLBACK_MODELS:
-                payload["model"] = model_name
-                try:
-                    write_log(app_name, f"⏳ Đang gửi yêu cầu tới Model: [{model_name}]...")
-                    response = requests.post(HERMES_API_URL, headers=HEADERS, json=payload, timeout=150)
-
-                    if response.status_code == 200:
-                        api_success = True
-                        write_log(app_name, f"✅ Model [{model_name}] phản hồi thành công!")
-                        break
-                    elif response.status_code == 429:
-                        write_log(app_name, f"⚠️ Model [{model_name}] bị giới hạn Rate Limit (429). Chuyển sang model dự phòng...")
-                        continue
-                    else:
-                        write_log(app_name, f"⚠️ Model [{model_name}] trả về lỗi {response.status_code}. Thử model tiếp theo...")
-                        continue
-                except Exception as e:
-                    write_log(app_name, f"⚠️ Lỗi kết nối tới [{model_name}]: {str(e)}. Thử model tiếp theo...")
-                    continue
-
-            if not api_success or response is None:
-                raise Exception("TẤT CẢ các AI Model trong danh sách dự phòng đều bị lỗi hoặc quá tải (429). Vui lòng thử lại sau!")
-
-            # ==================================================
-            # MÁY QUÉT X-QUANG ÉP LẤY JSON (ĐÃ VÁ LỖI CẤM SẬP)
-            # ==================================================
-            ai_raw_data = response.json()['choices'][0]['message']['content'].strip()
-
-            json_match = re.search(r'\{.*\}', ai_raw_data, re.DOTALL)
-            if json_match:
-                ai_data = json_match.group(0)
-            else:
-                write_log(app_name, f"⚠️ Lỗi định dạng: AI đã cố gắng trả về Text hoặc gọi Tool. Đang yêu cầu AI thử lại...")
-                build_error = f"LỖI NGHIÊM TRỌNG: Bạn vừa phản hồi bằng text hoặc dùng tool '{ai_raw_data[:50]}...'. BẮT BUỘC CHỈ TRẢ VỀ JSON."
-                if attempt == MAX_RETRIES:
-                    raise Exception("AI liên tục trả lời sai cấu trúc (không phải JSON) sau 3 lần thử.")
-                continue
+                full_prompt += f"\n\n[CẢNH BÁO TỪ HỆ THỐNG]: Lần Build trước thất bại với log:\n{build_error}\n\nHãy sửa nixpacks.toml hoặc mã nguồn cho đúng, BẮT BUỘC CHỈ TRẢ VỀ JSON!"
 
             try:
-                config_json = json.loads(ai_data)
-            except json.JSONDecodeError as e:
-                write_log(app_name, f"⚠️ [LỖI JSON] Sai cú pháp JSON: {e}. Đang yêu cầu AI sửa lại...")
-                build_error = "LỖI CÚ PHÁP JSON. Hãy kiểm tra lại dấu phẩy, dấu ngoặc kép và đảm bảo cấu trúc hợp lệ."
+                config_json = run_agy_json(full_prompt, app_name=app_name, cwd=WORKSPACE_DIR, timeout=90)
+            except Exception as e:
+                write_log(app_name, f"⚠️ [LỖI AI/JSON] {e}. Đang yêu cầu AI thử lại...")
+                build_error = f"Lỗi phân tích cú pháp JSON: {e}"
                 if attempt == MAX_RETRIES:
-                    raise Exception("AI liên tục sinh JSON sai cú pháp sau 3 lần thử.")
+                    raise Exception(f"AI liên tục sinh lỗi sau {MAX_RETRIES} lần thử: {e}")
                 continue
 
             user_action = config_json.get("user_action_required", "").strip()

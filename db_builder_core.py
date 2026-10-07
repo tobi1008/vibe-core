@@ -167,34 +167,10 @@ def merge_properties_content(orig_content: str, new_content: str) -> str:
             
     return "\n".join(updated_lines) + "\n"
 
-# --- HÀM GỌI AI ---
+# --- HÀM GỌI AI (ANTIGRAVITY CLI) ---
 def call_hermes_ai(prompt_text: str, app_name: str) -> dict:
-    payload = {
-        "messages": [
-            {"role": "user", "content": prompt_text}
-        ]
-    }
-    for model_name in FALLBACK_MODELS:
-        payload["model"] = model_name
-        try:
-            write_log(app_name, f"⏳ Đang kết nối Model: [{model_name}]...")
-            response = requests.post(HERMES_API_URL, headers=HEADERS, json=payload, timeout=60)
-            if response.status_code == 200:
-                content = response.json().get('choices', [{}])[0].get('message', {}).get('content')
-                if content:
-                    json_match = re.search(r'\{.*\}', content, re.DOTALL)
-                    if not json_match:
-                        raise Exception("Không tìm thấy cấu trúc JSON hợp lệ trong phản hồi.")
-                    raw_json = json_match.group(0)
-                    raw_json = re.sub(r'\\(?![/"\\bfnrtu])', r'\\\\', raw_json)
-                    ai_data = json.loads(raw_json)
-                    write_log(app_name, f"✅ Model [{model_name}] xử lý thành công!")
-                    return ai_data
-            write_log(app_name, f"⚠️ Model [{model_name}] phản hồi không khả dụng. Thử model khác...")
-        except Exception as e:
-            write_log(app_name, f"⚠️ Model [{model_name}] gặp lỗi: {str(e)}. Thử lại...")
-            
-    raise Exception("TẤT CẢ các AI Model dự phòng đều bị lỗi.")
+    from builder_core import run_agy_json
+    return run_agy_json(prompt_text, app_name=app_name, timeout=90)
 
 # --- BỘ ĐỊNH TUYẾN DATABASE ---
 def get_db_strategy(db_type: str, app_name: str, db_password: str, workspace_dir: str):

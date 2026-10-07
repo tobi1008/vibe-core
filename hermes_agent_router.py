@@ -426,85 +426,51 @@ Services:
 {json.dumps(context.get('key_files', {}), ensure_ascii=False, indent=2)}
 """
 
-    models_to_try = [preferred_model] if preferred_model else []
-    for m in FALLBACK_MODELS:
-        if m not in models_to_try:
-            models_to_try.append(m)
+    full_prompt = f"{system_instruction.strip()}\n\n{prompt.strip()}"
+    try:
+        from builder_core import run_agy_json
+        parsed_data = run_agy_json(
+            full_prompt,
+            app_name=context.get("app_name", "system"),
+            preferred_model=preferred_model,
+            timeout=60
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Antigravity AI phân tích lỗi: {str(e)}")
 
-    payload = {
-        "messages": [
-            {"role": "system", "content": system_instruction.strip()},
-            {"role": "user", "content": prompt.strip()}
-        ]
-    }
+    if "actions" in parsed_data and isinstance(parsed_data["actions"], list):
+        has_edit_file = False
+        has_rebuild = False
 
-    last_error = ""
-    for model_name in models_to_try:
-        payload["model"] = model_name
-        try:
-            write_log(context.get("app_name", "system"), f"🤖 [Hermes AI] Đang gửi phân tích tới Model [{model_name}]...")
-            resp = requests.post(HERMES_API_URL, headers=HEADERS, json=payload, timeout=25)
+        for act in parsed_data["actions"]:
+            if "file_path" in act and not act.get("path"):
+                act["path"] = act["file_path"]
+            if "path" in act and not act.get("file_path"):
+                act["file_path"] = act["path"]
+            if "diff" in act and not act.get("content"):
+                act["content"] = act["diff"]
+            if "content" in act and not act.get("diff"):
+                act["diff"] = act["content"]
 
-            if resp.status_code == 200:
-                raw_text = resp.json()["choices"][0]["message"]["content"].strip()
-                json_match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-                parsed_data = None
-                if json_match:
-                    try:
-                        parsed_data = json.loads(json_match.group(0))
-                    except json.JSONDecodeError:
-                        pass
-                if not parsed_data:
-                    clean_text = raw_text.strip()
-                    clean_text = re.sub(r"^`{1,3}(?:json)?\s*", "", clean_text, flags=re.IGNORECASE)
-                    clean_text = re.sub(r"\s*`{1,3}$", "", clean_text)
-                    parsed_data = json.loads(clean_text.strip())
+            if act.get("action_type") == "edit_file":
+                has_edit_file = True
+            if act.get("action_type") == "rebuild":
+                has_rebuild = True
 
-                if "actions" in parsed_data and isinstance(parsed_data["actions"], list):
-                    has_edit_file = False
-                    has_rebuild = False
+        if has_edit_file and not has_rebuild:
+            parsed_data["actions"] = [
+                a for a in parsed_data["actions"]
+                if a.get("action_type") != "restart_deployment"
+            ]
+            parsed_data["actions"].append({
+                "action_type": "rebuild",
+                "target": context.get("app_name"),
+                "description": "Đóng gói lại Docker Image mới và cập nhật Pod (Rebuild)",
+            })
 
-                    for act in parsed_data["actions"]:
-                        if "file_path" in act and not act.get("path"):
-                            act["path"] = act["file_path"]
-                        if "path" in act and not act.get("file_path"):
-                            act["file_path"] = act["path"]
-                        if "diff" in act and not act.get("content"):
-                            act["content"] = act["diff"]
-                        if "content" in act and not act.get("diff"):
-                            act["diff"] = act["content"]
+        parsed_data["actions"].sort(key=lambda a: ACTION_PRIORITY.get(a.get("action_type", ""), 99))
 
-                        if act.get("action_type") == "edit_file":
-                            has_edit_file = True
-                        if act.get("action_type") == "rebuild":
-                            has_rebuild = True
-
-                    if has_edit_file and not has_rebuild:
-                        parsed_data["actions"] = [
-                            a for a in parsed_data["actions"]
-                            if a.get("action_type") != "restart_deployment"
-                        ]
-                        parsed_data["actions"].append({
-                            "action_type": "rebuild",
-                            "target": context.get("app_name"),
-                            "description": "Đóng gói lại Docker Image mới và cập nhật Pod (Rebuild)",
-                        })
-
-                    parsed_data["actions"].sort(key=lambda a: ACTION_PRIORITY.get(a.get("action_type", ""), 99))
-
-                return parsed_data
-
-            elif resp.status_code == 429:
-                write_log(context.get("app_name", "system"), f"⚠️ Model [{model_name}] gặp Rate Limit 429. Đang chuyển sang model tiếp theo...")
-                continue
-            else:
-                last_error = f"Model {model_name} HTTP {resp.status_code}: {resp.text}"
-                continue
-        except Exception as e:
-            last_error = str(e)
-            continue
-
-    raise HTTPException(status_code=500, detail=f"Hermes Agent API không phản hồi hoặc quá tải: {last_error}")
+    return parsed_data
 
 
 def execute_remediation_action(app_name: str, action: RemediationAction) -> Dict[str, Any]:
@@ -935,45 +901,26 @@ Log Runtime: {context.get('pod_runtime_logs')[-1500:] if context.get('pod_runtim
 Ingresses: {context.get('k8s_ingresses')}
 """
 
-    # 3. Cấu trúc mảng tin nhắn (History + New Message)
-    messages = [
-        {"role": "system", "content": system_instruction.strip() + "\n\n" + context_prompt.strip()}
-    ]
-    
-    # Đẩy lịch sử chat cũ vào (giới hạn 10 tin nhắn gần nhất để tránh quá tải token)
-    for msg in payload.history[-10:]:
-        # API của một số LLM dùng "model" thay vì "assistant"
-        role = "assistant" if msg.role == "assistant" else "user"
-        messages.append({"role": role, "content": msg.content})
-        
-    # Đẩy tin nhắn mới nhất
-    messages.append({"role": "user", "content": payload.message})
+    chat_prompt = f"{system_instruction.strip()}\n\n{context_prompt.strip()}\n\n"
+    if payload.history:
+        chat_prompt += "--- LỊCH SỬ HỘI THOẠI TRƯỚC ĐÓ ---\n"
+        for msg in payload.history[-10:]:
+            speaker = "Người dùng" if msg.role == "user" else "Trợ lý Hermes"
+            chat_prompt += f"{speaker}: {msg.content}\n"
+        chat_prompt += "-----------------------------------\n\n"
+    chat_prompt += f"Người dùng: {payload.message}\nTrợ lý:"
 
-    # 4. Gọi LLM
-    models_to_try = [payload.preferred_model] if payload.preferred_model else FALLBACK_MODELS
-    last_error = ""
-    
-    req_payload = {"messages": messages}
-
-    for model_name in models_to_try:
-        req_payload["model"] = model_name
-        try:
-            write_log(payload.app_name, f"💬 [Hermes Chat] Gửi tin nhắn tới Model [{model_name}]...")
-            resp = requests.post(HERMES_API_URL, headers=HEADERS, json=req_payload, timeout=25)
-
-            if resp.status_code == 200:
-                reply_text = resp.json()["choices"][0]["message"]["content"].strip()
-                return {
-                    "status": "success",
-                    "reply": reply_text
-                }
-            elif resp.status_code == 429:
-                continue
-            else:
-                last_error = f"Model HTTP {resp.status_code}: {resp.text}"
-                continue
-        except Exception as e:
-            last_error = str(e)
-            continue
-
-    raise HTTPException(status_code=500, detail=f"Hermes Chat API quá tải: {last_error}")
+    try:
+        from builder_core import run_agy_prompt
+        reply_text = run_agy_prompt(
+            chat_prompt,
+            app_name=payload.app_name,
+            preferred_model=payload.preferred_model,
+            timeout=45
+        )
+        return {
+            "status": "success",
+            "reply": reply_text
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Antigravity Chat API gặp lỗi: {str(e)}")
