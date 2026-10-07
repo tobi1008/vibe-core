@@ -1,0 +1,25 @@
+# 1. Các thư mục dữ liệu động siêu nặng (CẤM PUSH)
+workspaces/
+logs/
+backups/
+
+# 2. Môi trường ảo và Cache của Python
+venv/
+__pycache__/
+.pytest_cache/
+
+# 3. File chứa dữ liệu cấu hình Runtime & Bảo mật
+apps_config.json
+.env
+
+# 4. File nén, file nháp và file backup cũ rác
+*.zip
+*.bak
+*.noAIDebug
+*.nofilemanger
+*.nobackup
+*.nocicd
+*.nodb
+*.nofullstack
+test_delete.py
+vibehosting-BE/
