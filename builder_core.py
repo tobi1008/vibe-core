@@ -24,10 +24,11 @@ LOGS_DIR = "/opt/vibe-hosting/logs"
 # CẤU HÌNH ANTIGRAVITY AI (GEMINI FLASH)
 # ==========================================
 AGY_MODELS = [
-    "gemini-3.8-flash-high",
-    "gemini-3.8-flash-medium",
     "gemini-3.7-flash-high",
     "gemini-3.7-flash-medium",
+    "gemini-3.8-flash-low",
+    "gemini-3.8-flash-medium",
+    "gemini-3.8-flash-high",
 ]
 FALLBACK_MODELS = AGY_MODELS
 HERMES_API_URL = ""
@@ -58,7 +59,7 @@ def get_agy_bin() -> str:
             return p
     return "agy"
 
-def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 90, preferred_model: Optional[str] = None) -> str:
+def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 25, preferred_model: Optional[str] = None) -> str:
     """
     Thực thi prompt thông qua Antigravity CLI (agy) trực tiếp trên máy chủ.
     Tự động fallback giữa các phiên bản Gemini Flash.
@@ -117,7 +118,7 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
 
     raise Exception(f"Tất cả các Model Antigravity đều không phản hồi: {last_err}")
 
-def run_agy_json(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 90, preferred_model: Optional[str] = None) -> dict:
+def run_agy_json(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 25, preferred_model: Optional[str] = None) -> dict:
     """
     Gọi agy và bóc tách dữ liệu JSON an toàn từ kết quả trả về.
     """

@@ -340,19 +340,22 @@ def collect_debug_context(app_name: str, component: str = "be") -> Dict[str, Any
             if any(ig in root for ig in [".git", "node_modules", ".next", "dist", "build", ".cache"]):
                 continue
             for f in files:
+                if len(context["key_files"]) >= 6:
+                    break
                 if f in tracked_filenames:
                     fpath = os.path.join(root, f)
                     rel = os.path.relpath(fpath, ws).replace("\\", "/")
                     try:
                         with open(fpath, "r", encoding="utf-8") as fp:
-                            context["key_files"][rel] = fp.read(8000)
+                            context["key_files"][rel] = fp.read(2500)
                     except Exception:
                         pass
 
         all_logs = f"{context['build_logs']}\n{context['pod_runtime_logs']}"
         extracted_files = extract_culprit_files_from_logs(all_logs, ws)
         for rel_k, content_v in extracted_files.items():
-            context["key_files"][rel_k] = content_v
+            if len(context["key_files"]) < 8:
+                context["key_files"][rel_k] = content_v[:2500]
 
     return context
 
@@ -433,7 +436,7 @@ Services:
             full_prompt,
             app_name=context.get("app_name", "system"),
             preferred_model=preferred_model,
-            timeout=60
+            timeout=25
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Antigravity AI phân tích lỗi: {str(e)}")
