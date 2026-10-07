@@ -443,7 +443,7 @@ Services:
         payload["model"] = model_name
         try:
             write_log(context.get("app_name", "system"), f"🤖 [Hermes AI] Đang gửi phân tích tới Model [{model_name}]...")
-            resp = requests.post(HERMES_API_URL, headers=HEADERS, json=payload, timeout=75)
+            resp = requests.post(HERMES_API_URL, headers=HEADERS, json=payload, timeout=25)
 
             if resp.status_code == 200:
                 raw_text = resp.json()["choices"][0]["message"]["content"].strip()
@@ -816,7 +816,7 @@ def push_healed_workspace_to_git(app_name: str, component: str, token: str) -> D
 
 
 @router.post("/analyze")
-async def analyze_app_issues(payload: AIDebugRequest):
+def analyze_app_issues(payload: AIDebugRequest):
     context = collect_debug_context(payload.app_name, payload.component or "be")
     ai_result = query_hermes_diagnostics(context, payload.preferred_model, payload.user_note)
 
@@ -857,7 +857,7 @@ async def analyze_app_issues(payload: AIDebugRequest):
 
 
 @router.post("/{app_name}/execute")
-async def execute_approved_actions(app_name: str, payload: ExecuteActionsPayload):
+def execute_approved_actions(app_name: str, payload: ExecuteActionsPayload):
     try:
         sorted_actions = sorted(payload.actions, key=lambda a: ACTION_PRIORITY.get(a.action_type, 99))
 
@@ -911,7 +911,7 @@ async def execute_approved_actions(app_name: str, payload: ExecuteActionsPayload
         }
 
 @router.post("/chat")
-async def chat_with_hermes(payload: AIChatRequest):
+def chat_with_hermes(payload: AIChatRequest):
     """
     Endpoint dành riêng cho khung Chat liên tục. 
     Hỗ trợ History và trả về văn bản tự do thay vì ép kiểu JSON.
@@ -959,7 +959,7 @@ Ingresses: {context.get('k8s_ingresses')}
         req_payload["model"] = model_name
         try:
             write_log(payload.app_name, f"💬 [Hermes Chat] Gửi tin nhắn tới Model [{model_name}]...")
-            resp = requests.post(HERMES_API_URL, headers=HEADERS, json=req_payload, timeout=60)
+            resp = requests.post(HERMES_API_URL, headers=HEADERS, json=req_payload, timeout=25)
 
             if resp.status_code == 200:
                 reply_text = resp.json()["choices"][0]["message"]["content"].strip()

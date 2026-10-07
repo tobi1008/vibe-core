@@ -16,7 +16,10 @@ import requests
 
 # Nạp router File Manager & Git an toàn
 try:
-    from file_manager_router import router as file_manager_router
+    try:
+        from file_manager_api import router as file_manager_router
+    except ImportError:
+        from file_manager_router import router as file_manager_router
 except Exception as e:
     file_manager_router = None
 
@@ -360,7 +363,7 @@ async def get_build_logs(app_name: str):
         return {"status": "waiting", "logs": f"⏳ Đang cập nhật log... ({str(e)})"}
 
 @app.get("/api/pod-logs/{app_name}")
-async def get_pod_runtime_logs(app_name: str, component: Optional[str] = Query(None), lines: int = Query(200, ge=10, le=2000)):
+def get_pod_runtime_logs(app_name: str, component: Optional[str] = Query(None), lines: int = Query(200, ge=10, le=2000)):
     try:
         target_name = f"{app_name}-{component}" if component in ["be", "fe"] else app_name
         check_cmd = f"kubectl get pods -n {K8S_NAMESPACE} -l 'app in ({target_name}, {app_name})' -o jsonpath='{{.items[*].metadata.name}}'"
@@ -439,7 +442,7 @@ async def github_webhook(app_name: str, request: Request, background_tasks: Back
     return {"status": "ignored", "message": "Không có push code mới."}
 
 @app.get("/api/apps/{app_name}/history")
-async def get_app_rollout_history(app_name: str, component: Optional[str] = Query(None)):
+def get_app_rollout_history(app_name: str, component: Optional[str] = Query(None)):
     """API lấy lịch sử các phiên bản Deploy của K8s"""
     target_deploy = f"{app_name}-{component}" if component in ["be", "fe"] else app_name
     
@@ -480,7 +483,7 @@ async def get_app_rollout_history(app_name: str, component: Optional[str] = Quer
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/apps/{app_name}/rollback")
-async def trigger_app_rollback(app_name: str, req: RollbackRequest):
+def trigger_app_rollback(app_name: str, req: RollbackRequest):
     """API Kích hoạt Rollback về phiên bản cũ"""
     target_deploy = f"{app_name}-{req.component}" if req.component in ["be", "fe"] else app_name
     
