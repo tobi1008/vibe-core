@@ -6,6 +6,7 @@ import re
 import time
 import zipfile
 import tarfile
+import traceback
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 
@@ -17,7 +18,6 @@ from builder_core import (
     DOCKER_PASSWORD,
     BASE_WORKSPACE,
     LOGS_DIR,
-    write_log,
     run_cmd,
     run_agy_json,
     delete_app,
@@ -27,6 +27,27 @@ UPLOAD_DIR = "/opt/vibe-hosting/uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(BASE_WORKSPACE, exist_ok=True)
 os.makedirs(LOGS_DIR, exist_ok=True)
+
+
+# ==============================================================================
+# HÀM GHI LOG THỜI GIAN THỰC (REAL-TIME FLUSH & FSYNC)
+# ==============================================================================
+
+def write_log(app_name: str, message: str):
+    """
+    Ghi log nối tiếp (append) và ép xả buffer (fsync) ngay lập tức
+    để API /api/logs/{app_name} trên Frontend stream theo thời gian thực.
+    """
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    log_path = f"{LOGS_DIR}/{app_name}.log"
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(message + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+    except Exception:
+        pass
+    print(message, flush=True)
 
 
 # ==============================================================================
@@ -60,7 +81,6 @@ def safe_extract_tar(tar_path: str, extract_dir: str):
 
 def extract_rar(rar_path: str, extract_dir: str, app_name: str):
     """Giải nén file RAR bằng thư viện Python hoặc lệnh unrar/7z của hệ thống"""
-    # Thử dùng rarfile nếu có
     try:
         import rarfile
         with rarfile.RarFile(rar_path) as rf:
@@ -69,7 +89,6 @@ def extract_rar(rar_path: str, extract_dir: str, app_name: str):
     except Exception:
         pass
 
-    # Fallback qua lệnh CLI
     if shutil.which("unrar"):
         run_cmd(["unrar", "x", "-o+", "-inul", rar_path, extract_dir], app_name)
     elif shutil.which("rar"):
@@ -133,12 +152,12 @@ def flatten_single_root_dir(extract_dir: str, app_name: str):
 def extract_archive(archive_path: str, extract_to: str, app_name: str):
     """Hàm giải nén tổng hợp: Tự động phát hiện định dạng file và giải nén an toàn"""
     if not os.path.exists(archive_path):
-        raise FileNotFoundError(f"Không tìm thấy file nén tại: {archive_path}")
+        raise FileNotFoundError(f"Không tìm thấy file nén tải lên tại: {archive_path}")
 
     os.makedirs(extract_to, exist_ok=True)
     lower_path = archive_path.lower()
 
-    write_log(app_name, f"[1] Đang giải nén file mã nguồn: {os.path.basename(archive_path)}...")
+    write_log(app_name, f"[1] Đang tiến hành giải nén file: {os.path.basename(archive_path)}...")
 
     if lower_path.endswith(".zip"):
         safe_extract_zip(archive_path, extract_to)
@@ -149,7 +168,7 @@ def extract_archive(archive_path: str, extract_to: str, app_name: str):
     elif lower_path.endswith(".7z"):
         extract_7z(archive_path, extract_to, app_name)
     else:
-        # Thử fallback qua 7z hoặc tar
+        # Thử fallback qua 7z hoặc zipfile/tarfile
         if shutil.which("7z"):
             run_cmd(["7z", "x", "-y", f"-o{extract_to}", archive_path], app_name)
         elif zipfile.is_zipfile(archive_path):
@@ -208,19 +227,18 @@ def deploy_archive_app(archive_path: str, app_name: str, app_domain: str):
     """
     Quy trình triển khai hoàn chỉnh ứng dụng từ file nén tải lên (.zip, .tar, .rar, .7z)
     Tích hợp Antigravity AI Engine (Gemini Flash) sinh cấu hình và tự phục hồi.
+    Bọc toàn bộ task trong try...except và stream log thời gian thực.
     """
-    os.makedirs(LOGS_DIR, exist_ok=True)
-    with open(f"{LOGS_DIR}/{app_name}.log", "w", encoding="utf-8") as f:
-        f.write(f"=== [BẮT ĐẦU DEPLOY TỪ FILE NÉN] {app_name} ===\n")
-
-    IMAGE_TAG = f"{DOCKER_USER}/{app_name}:latest"
-    WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
-
-    os.makedirs(BASE_WORKSPACE, exist_ok=True)
-    if os.path.exists(WORKSPACE_DIR):
-        shutil.rmtree(WORKSPACE_DIR, ignore_errors=True)
-
     try:
+        write_log(app_name, f"\n=== [BẮT ĐẦU DEPLOY TỪ FILE NÉN] {app_name} ===")
+
+        IMAGE_TAG = f"{DOCKER_USER}/{app_name}:latest"
+        WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
+
+        os.makedirs(BASE_WORKSPACE, exist_ok=True)
+        if os.path.exists(WORKSPACE_DIR):
+            shutil.rmtree(WORKSPACE_DIR, ignore_errors=True)
+
         # Bước 1: Giải nén file vào workspace
         extract_archive(archive_path, WORKSPACE_DIR, app_name)
 
@@ -377,11 +395,15 @@ QUY ĐỊNH K3S YAML (CẤM TỰ CHẾ TÊN & CẤM DÙNG NGINX):
         run_cmd(["kubectl", "apply", "-f", "k8s/service.yaml"], app_name, cwd=WORKSPACE_DIR)
         run_cmd(["kubectl", "apply", "-f", "k8s/ingress.yaml"], app_name, cwd=WORKSPACE_DIR)
 
+        # Báo hiệu trạng thái hoàn tất cho Frontend
+        write_log(app_name, f"\n=== HOÀN TẤT TRIỂN KHAI ===")
         write_log(app_name, f"=== [HOÀN TẤT] Ứng dụng từ file nén đã online tại https://{app_domain} ===")
         write_log(app_name, "DONE")
 
     except Exception as e:
-        write_log(app_name, f"\n[LỖI QUY TRÌNH DEPLOY TỪ FILE NÉN] {e}")
+        err_trace = traceback.format_exc()
+        write_log(app_name, f"\n❌ [ERROR] Lỗi trong quy trình deploy file nén: {str(e)}")
+        write_log(app_name, f"[CHI TIẾT TRACEBACK]:\n{err_trace}")
         write_log(app_name, "ERROR")
 
 
@@ -399,25 +421,15 @@ def deploy_archive_with_db(
     """
     Triển khai mã nguồn từ file nén kèm theo cấp phát Database K8s nội bộ.
     Tự động liên kết DATABASE_URL và seed database nếu có file backup sql/json.
+    Bọc toàn bộ task trong try...except và stream log thời gian thực.
     """
-    from db_builder_core import (
-        generate_db_password,
-        get_db_strategy,
-        generate_db_manifest,
-        generate_standard_deployment,
-        generate_standard_service,
-        generate_standard_ingress,
-        restore_database_backup,
-        analyze_and_fix_backend,
-    )
-
-    write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI TỪ FILE NÉN CÓ DATABASE] {app_name} ({db_type.upper()}) ===")
-    WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
-    os.makedirs(BASE_WORKSPACE, exist_ok=True)
-    if os.path.exists(WORKSPACE_DIR):
-        shutil.rmtree(WORKSPACE_DIR, ignore_errors=True)
-
     try:
+        write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI TỪ FILE NÉN CÓ DATABASE] {app_name} ({db_type.upper()}) ===")
+        WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
+        os.makedirs(BASE_WORKSPACE, exist_ok=True)
+        if os.path.exists(WORKSPACE_DIR):
+            shutil.rmtree(WORKSPACE_DIR, ignore_errors=True)
+
         # Bước 1: Giải nén mã nguồn
         extract_archive(archive_path, WORKSPACE_DIR, app_name)
         if os.path.exists(archive_path):
@@ -428,8 +440,21 @@ def deploy_archive_with_db(
 
         auto_heal_network_bindings(WORKSPACE_DIR, app_name)
 
+        # Nạp an toàn các module K8s Database
+        from db_builder_core import (
+            generate_db_password,
+            get_db_strategy,
+            generate_db_manifest,
+            generate_standard_deployment,
+            generate_standard_service,
+            generate_standard_ingress,
+            import_backup_to_db,
+            analyze_and_fix_backend,
+            auto_patch_nodejs_esm_conflicts,
+        )
+
         # Bước 2: Chuẩn bị mật khẩu và K3s Manifest cho Database
-        write_log(app_name, f"[1] Đang chuẩn bị Database nội bộ ({db_type.upper()})...")
+        write_log(app_name, f"\n[1] Đang chuẩn bị Database nội bộ ({db_type.upper()})...")
         pass_env_map = {
             "mysql": "MYSQL_PASSWORD",
             "mariadb": "MARIADB_PASSWORD",
@@ -461,6 +486,7 @@ def deploy_archive_with_db(
 
         write_log(app_name, "[3] Đang chờ Pod Database khởi động...")
         db_pod_name = ""
+        start_wait = time.time()
         while True:
             try:
                 db_pod_name = subprocess.check_output(
@@ -478,24 +504,43 @@ def deploy_archive_with_db(
                     break
             except Exception:
                 pass
-            time.sleep(3)
+
+            if time.time() - start_wait > 300:
+                raise Exception("Quá thời gian chờ khởi động Pod Database (Timeout 300s).")
+            time.sleep(4)
 
         write_log(app_name, f"✅ Database đã sẵn sàng: {db_pod_name}")
 
         # Khôi phục dữ liệu từ file backup (nếu có)
+        db_name = f"{app_name}_db".replace("-", "_")
         if backup_file_path and os.path.exists(backup_file_path):
             write_log(app_name, f"[4] Đang nạp dữ liệu khởi tạo từ file backup...")
-            restore_database_backup(db_pod_name, backup_file_path, db_type, db_password, strategy, app_name)
+            import_backup_to_db(
+                db_type,
+                db_pod_name,
+                db_password,
+                db_name,
+                strategy["connection_info"]["user"],
+                backup_file_path,
+                app_name
+            )
+
+        db_info = strategy["connection_info"]
+        db_info["password"] = db_password
+        db_info["db_name"] = db_name
 
         # Bước 4: AI phân tích mã nguồn và inject DATABASE_URL vào code
-        write_log(app_name, "[5] Đang cấu hình kết nối Database vào mã nguồn...")
+        write_log(app_name, "\n[5] Đang cấu hình kết nối Database vào mã nguồn...")
         detected_port = analyze_and_fix_backend(
-            WORKSPACE_DIR, app_name, app_domain, strategy["connection_info"]
+            WORKSPACE_DIR, app_name, app_domain, db_info
         )
+
+        # Tự động vá ESM/CommonJS cho Node.js
+        auto_patch_nodejs_esm_conflicts(WORKSPACE_DIR, app_name)
 
         # Bước 5: Build Image bằng Nixpacks
         IMAGE_TAG = f"{DOCKER_USER}/{app_name}:latest"
-        write_log(app_name, f"[6] Bắt đầu build Docker image ({IMAGE_TAG})...")
+        write_log(app_name, f"\n[6] Bắt đầu build Docker image ({IMAGE_TAG})...")
         run_cmd(["nixpacks", "build", ".", "--name", IMAGE_TAG], app_name, cwd=WORKSPACE_DIR)
 
         # Bước 6: Push Image lên Docker Hub
@@ -504,17 +549,26 @@ def deploy_archive_with_db(
 
         # Bước 7: Sinh Manifest và triển khai Web App
         write_log(app_name, "[8] Đang áp dụng Web App và Ingress SSL lên K3s...")
-        generate_standard_deployment(app_name, IMAGE_TAG, detected_port, WORKSPACE_DIR)
-        generate_standard_service(app_name, detected_port, WORKSPACE_DIR)
-        generate_standard_ingress(app_name, app_domain, detected_port, WORKSPACE_DIR)
+        k8s_dir = f"{WORKSPACE_DIR}/k8s"
+        os.makedirs(k8s_dir, exist_ok=True)
+        with open(f"{k8s_dir}/deployment.yaml", "w", encoding="utf-8") as f:
+            f.write(generate_standard_deployment(app_name, IMAGE_TAG, detected_port, db_info))
+        with open(f"{k8s_dir}/service.yaml", "w", encoding="utf-8") as f:
+            f.write(generate_standard_service(app_name, detected_port))
+        with open(f"{k8s_dir}/ingress.yaml", "w", encoding="utf-8") as f:
+            f.write(generate_standard_ingress(app_name, app_domain))
 
         run_cmd(["kubectl", "apply", "-f", "k8s/deployment.yaml"], app_name, cwd=WORKSPACE_DIR)
         run_cmd(["kubectl", "apply", "-f", "k8s/service.yaml"], app_name, cwd=WORKSPACE_DIR)
         run_cmd(["kubectl", "apply", "-f", "k8s/ingress.yaml"], app_name, cwd=WORKSPACE_DIR)
 
+        # Báo hiệu trạng thái hoàn tất cho Frontend
+        write_log(app_name, f"\n=== HOÀN TẤT TRIỂN KHAI ===")
         write_log(app_name, f"=== [HOÀN TẤT] Ứng dụng kèm DB đã online tại https://{app_domain} ===")
         write_log(app_name, "DONE")
 
     except Exception as e:
-        write_log(app_name, f"\n[LỖI QUY TRÌNH DEPLOY ARCHIVE + DB] {e}")
+        err_trace = traceback.format_exc()
+        write_log(app_name, f"\n❌ [ERROR] Lỗi trong quá trình triển khai Archive + DB: {str(e)}")
+        write_log(app_name, f"[CHI TIẾT TRACEBACK]:\n{err_trace}")
         write_log(app_name, "ERROR")
