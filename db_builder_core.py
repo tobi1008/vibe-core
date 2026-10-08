@@ -453,26 +453,111 @@ spec:
 def import_backup_to_db(db_type: str, db_pod_name: str, db_password: str, db_name: str, user: str, backup_file_path: str, app_name: str):
     if not backup_file_path or not os.path.exists(backup_file_path):
         return
-    write_log(app_name, f"\n[DB Backup] Đang nạp dữ liệu từ file ({os.path.basename(backup_file_path)}) vào {db_type.upper()}...")
-    if db_type in ["mysql", "mariadb"]:
-        import_cmd = (
-            f"sed -E '/^[[:space:]]*(CREATE DATABASE|USE)[[:space:]]+/Id' '{backup_file_path}' | "
-            f"kubectl exec -i {db_pod_name} -n {K8S_NAMESPACE} -- "
-            f"mysql -u {user} -p{db_password} {db_name}"
-        )
-    elif db_type == "postgresql":
-        import_cmd = f"kubectl exec -i {db_pod_name} -n {K8S_NAMESPACE} -- psql -U {user} -d {db_name} < '{backup_file_path}'"
-    elif db_type == "mongodb":
-        import_cmd = f"kubectl cp '{backup_file_path}' {K8S_NAMESPACE}/{db_pod_name}:/tmp/dump_file && kubectl exec -i {db_pod_name} -n {K8S_NAMESPACE} -- mongorestore --username root --password {db_password} --authenticationDatabase admin --archive=/tmp/dump_file --gzip"
-    else:
-        write_log(app_name, "   -> Chưa hỗ trợ nạp tự động cho loại DB này.")
-        return
+
+    db_type_lower = db_type.lower()
+    file_name = os.path.basename(backup_file_path)
+    file_size_mb = os.path.getsize(backup_file_path) / (1024 * 1024)
+    write_log(app_name, f"\n[DB Backup] Đang nạp dữ liệu từ file ({file_name} - {file_size_mb:.2f} MB) vào {db_type.upper()}...")
+
+    # Bước A: Kiểm tra dịch vụ Database trong Pod đã thực sự sẵn sàng nhận kết nối
+    write_log(app_name, f"[DB Backup] Đang kiểm tra cổng dịch vụ nội bộ của {db_type.upper()}...")
+    ready = False
+    for attempt in range(25):
+        try:
+            if db_type_lower in ["mysql", "mariadb"]:
+                chk = subprocess.run(
+                    f"kubectl exec {db_pod_name} -n {K8S_NAMESPACE} -- mysql -u {user} -p'{db_password}' -e 'SELECT 1;'",
+                    shell=True, capture_output=True, text=True, timeout=10
+                )
+            elif db_type_lower == "postgresql":
+                chk = subprocess.run(
+                    f"kubectl exec {db_pod_name} -n {K8S_NAMESPACE} -- psql -U {user} -d {db_name} -c 'SELECT 1;'",
+                    shell=True, capture_output=True, text=True, timeout=10
+                )
+            elif db_type_lower == "mongodb":
+                chk = subprocess.run(
+                    f"kubectl exec {db_pod_name} -n {K8S_NAMESPACE} -- mongosh --eval \"db.adminCommand('ping')\"",
+                    shell=True, capture_output=True, text=True, timeout=10
+                )
+            else:
+                ready = True
+                break
+
+            if chk.returncode == 0:
+                ready = True
+                write_log(app_name, f"✅ [DB Backup] Dịch vụ {db_type.upper()} đã sẵn sàng nhận kết nối!")
+                break
+        except Exception:
+            pass
+        time.sleep(3)
+
+    if not ready:
+        write_log(app_name, f"⚠️ [DB Backup] Pod chưa phản hồi truy vấn sau 75s, tiếp tục tiến hành sao chép file...")
+
+    # Bước B: Sử dụng 'kubectl cp' để đưa file vào Pod rồi nạp tại chỗ (tránh hoàn toàn deadlock của stdin SPDY pipe)
+    temp_target_in_pod = f"/tmp/restore_{int(time.time())}.sql"
+    clean_local_path = None
 
     try:
-        subprocess.run(import_cmd, shell=True, check=True, executable='/bin/bash')
-        write_log(app_name, "   -> Nạp dữ liệu backup thành công 100%!")
+        if db_type_lower in ["mysql", "mariadb"]:
+            write_log(app_name, "[DB Backup] Chuẩn hóa mã lệnh SQL (lọc bỏ USE/CREATE DATABASE)...")
+            clean_local_path = f"/tmp/{app_name}_clean_restore_{int(time.time())}.sql"
+            with open(backup_file_path, "r", encoding="utf-8", errors="ignore") as fin, \
+                 open(clean_local_path, "w", encoding="utf-8") as fout:
+                for line in fin:
+                    stripped = line.strip().upper()
+                    if stripped.startswith("CREATE DATABASE") or stripped.startswith("USE "):
+                        continue
+                    fout.write(line)
+
+            source_file = clean_local_path
+            write_log(app_name, f"[DB Backup] Đang sao chép file backup ({os.path.getsize(source_file) / (1024*1024):.2f} MB) vào {db_pod_name}...")
+            cp_cmd = f"kubectl cp '{source_file}' {K8S_NAMESPACE}/{db_pod_name}:{temp_target_in_pod}"
+            subprocess.run(cp_cmd, shell=True, check=True, timeout=180)
+
+            write_log(app_name, f"[DB Backup] Đang thực thi nạp dữ liệu vào Database '{db_name}'...")
+            exec_import = f"kubectl exec {db_pod_name} -n {K8S_NAMESPACE} -- /bin/sh -c \"mysql -u {user} -p'{db_password}' --force {db_name} < {temp_target_in_pod}\""
+            subprocess.run(exec_import, shell=True, check=True, timeout=600)
+            write_log(app_name, "   -> Nạp dữ liệu backup thành công 100%!")
+
+        elif db_type_lower == "postgresql":
+            write_log(app_name, f"[DB Backup] Đang sao chép file backup vào {db_pod_name}...")
+            cp_cmd = f"kubectl cp '{backup_file_path}' {K8S_NAMESPACE}/{db_pod_name}:{temp_target_in_pod}"
+            subprocess.run(cp_cmd, shell=True, check=True, timeout=180)
+
+            write_log(app_name, f"[DB Backup] Đang thực thi nạp dữ liệu vào PostgreSQL '{db_name}'...")
+            exec_import = f"kubectl exec {db_pod_name} -n {K8S_NAMESPACE} -- /bin/sh -c \"psql -U {user} -d {db_name} -f {temp_target_in_pod}\""
+            subprocess.run(exec_import, shell=True, check=True, timeout=600)
+            write_log(app_name, "   -> Nạp dữ liệu backup PostgreSQL thành công 100%!")
+
+        elif db_type_lower == "mongodb":
+            temp_dump = f"/tmp/dump_{int(time.time())}"
+            write_log(app_name, f"[DB Backup] Đang sao chép file dump vào {db_pod_name}...")
+            cp_cmd = f"kubectl cp '{backup_file_path}' {K8S_NAMESPACE}/{db_pod_name}:{temp_dump}"
+            subprocess.run(cp_cmd, shell=True, check=True, timeout=180)
+
+            write_log(app_name, f"[DB Backup] Đang thực thi mongorestore...")
+            exec_import = f"kubectl exec {db_pod_name} -n {K8S_NAMESPACE} -- mongorestore --username root --password '{db_password}' --authenticationDatabase admin --archive={temp_dump} --gzip"
+            subprocess.run(exec_import, shell=True, check=True, timeout=600)
+            write_log(app_name, "   -> Nạp dữ liệu MongoDB thành công 100%!")
+
+        else:
+            write_log(app_name, f"   -> Chưa hỗ trợ nạp tự động cho loại DB '{db_type}'.")
+
+    except subprocess.TimeoutExpired:
+        write_log(app_name, f"   -> [CẢNH BÁO] Quá thời gian chờ (Timeout) khi nạp file backup. Hệ thống tiếp tục các bước deploy...")
     except Exception as e:
         write_log(app_name, f"   -> [CẢNH BÁO] Lỗi khi nạp file backup: {e}")
+    finally:
+        try:
+            subprocess.run(f"kubectl exec {db_pod_name} -n {K8S_NAMESPACE} -- rm -f {temp_target_in_pod}", shell=True, capture_output=True, timeout=15)
+        except Exception:
+            pass
+        if clean_local_path and os.path.exists(clean_local_path):
+            try:
+                os.remove(clean_local_path)
+            except Exception:
+                pass
 
 # --- AI VÁ MÃ NGUỒN CHO BACKEND ---
 def analyze_and_fix_backend(workspace_dir: str, app_name: str, app_domain: str, db_info: dict):
