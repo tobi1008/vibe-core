@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from builder_core import deploy_app, delete_app, BASE_WORKSPACE, K8S_NAMESPACE
+from archive_builder_core import deploy_archive_app, deploy_archive_with_db, UPLOAD_DIR
 from cicd_core import redeploy_app
 from db_builder_core import deploy_app_with_db, deploy_fullstack_app, delete_app_db_resources
 from monorepo_builder_core import deploy_monorepo_app
@@ -44,6 +45,7 @@ BACKUP_DIR = "/opt/vibe-hosting/backups"
 LOG_DIR = "/opt/vibe-hosting/logs"
 os.makedirs(BACKUP_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 if file_manager_router:
     app.include_router(file_manager_router)
@@ -176,6 +178,94 @@ async def trigger_deploy_db(
     })
     background_tasks.add_task(deploy_app_with_db, final_url, app_name, app_domain, db_type, saved_backup_path)
     return {"status": "success", "message": f"Đã tiếp nhận yêu cầu cấp phát {db_type.upper()} cho {app_name}."}
+
+@app.post("/api/deploy-archive")
+async def trigger_deploy_archive(
+    background_tasks: BackgroundTasks,
+    archive_file: UploadFile = File(...),
+    app_name: str = Form(...),
+    app_domain: str = Form(...)
+):
+    safe_filename = os.path.basename(archive_file.filename)
+    saved_archive_path = f"{UPLOAD_DIR}/{app_name}_{safe_filename}"
+    try:
+        with open(saved_archive_path, "wb") as buffer:
+            shutil.copyfileobj(archive_file.file, buffer)
+    except Exception as e:
+        return {"status": "error", "message": f"Lỗi lưu file nén tải lên: {str(e)}"}
+    finally:
+        archive_file.file.close()
+
+    with open(f"{LOG_DIR}/{app_name}.log", "w", encoding="utf-8") as f:
+        f.write(f"🚀 [INIT] Bắt đầu quy trình Deploy từ file nén: {app_name} ({safe_filename})...\n")
+
+    save_app_config(app_name, {
+        "auto_cicd": False,
+        "deploy_type": "archive",
+        "archive_filename": safe_filename,
+        "app_domain": app_domain
+    })
+
+    background_tasks.add_task(deploy_archive_app, saved_archive_path, app_name, app_domain)
+    return {
+        "status": "success",
+        "message": f"Hệ thống đã nhận file nén [{safe_filename}] và đang tiến hành giải nén & triển khai {app_name}."
+    }
+
+@app.post("/api/deploy-archive-with-db")
+async def trigger_deploy_archive_with_db(
+    background_tasks: BackgroundTasks,
+    archive_file: UploadFile = File(...),
+    app_name: str = Form(...),
+    app_domain: str = Form(...),
+    db_type: str = Form(...),
+    backup_file: Optional[UploadFile] = File(None)
+):
+    safe_filename = os.path.basename(archive_file.filename)
+    saved_archive_path = f"{UPLOAD_DIR}/{app_name}_{safe_filename}"
+    try:
+        with open(saved_archive_path, "wb") as buffer:
+            shutil.copyfileobj(archive_file.file, buffer)
+    except Exception as e:
+        return {"status": "error", "message": f"Lỗi lưu file nén tải lên: {str(e)}"}
+    finally:
+        archive_file.file.close()
+
+    saved_backup_path = ""
+    if backup_file and backup_file.filename:
+        safe_backup_name = os.path.basename(backup_file.filename)
+        saved_backup_path = f"{BACKUP_DIR}/{app_name}_{safe_backup_name}"
+        try:
+            with open(saved_backup_path, "wb") as buffer:
+                shutil.copyfileobj(backup_file.file, buffer)
+        except Exception as e:
+            return {"status": "error", "message": f"Lỗi lưu file DB backup: {str(e)}"}
+        finally:
+            backup_file.file.close()
+
+    with open(f"{LOG_DIR}/{app_name}.log", "w", encoding="utf-8") as f:
+        f.write(f"🚀 [INIT] Bắt đầu quy trình Deploy file nén có Database: {app_name} ({db_type.upper()})...\n")
+
+    save_app_config(app_name, {
+        "auto_cicd": False,
+        "deploy_type": "archive_with_db",
+        "db_type": db_type,
+        "archive_filename": safe_filename,
+        "app_domain": app_domain
+    })
+
+    background_tasks.add_task(
+        deploy_archive_with_db,
+        saved_archive_path,
+        app_name,
+        app_domain,
+        db_type,
+        saved_backup_path
+    )
+    return {
+        "status": "success",
+        "message": f"Đã tiếp nhận file nén và yêu cầu cấp phát {db_type.upper()} cho {app_name}."
+    }
 
 @app.post("/api/deploy-fullstack")
 async def trigger_deploy_fullstack(
