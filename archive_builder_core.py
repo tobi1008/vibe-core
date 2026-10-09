@@ -20,6 +20,7 @@ from builder_core import (
     LOGS_DIR,
     run_cmd,
     run_agy_json,
+    call_ai_json,
     delete_app,
 )
 
@@ -223,14 +224,14 @@ def auto_heal_network_bindings(workspace_dir: str, app_name: str):
 # 3. LUỒNG TRIỂN KHAI MÃ NGUỒN TỪ FILE NÉN (STANDALONE WEB APP)
 # ==============================================================================
 
-def deploy_archive_app(archive_path: str, app_name: str, app_domain: str):
+def deploy_archive_app(archive_path: str, app_name: str, app_domain: str, ai_provider: str = "agy"):
     """
     Quy trình triển khai hoàn chỉnh ứng dụng từ file nén tải lên (.zip, .tar, .rar, .7z)
-    Tích hợp Antigravity AI Engine (Gemini Flash) sinh cấu hình và tự phục hồi.
+    Tích hợp AI Engine (Antigravity hoặc Hermes) sinh cấu hình và tự phục hồi.
     Bọc toàn bộ task trong try...except và stream log thời gian thực.
     """
     try:
-        write_log(app_name, f"\n=== [BẮT ĐẦU DEPLOY TỪ FILE NÉN] {app_name} ===")
+        write_log(app_name, f"\n=== [BẮT ĐẦU DEPLOY TỪ FILE NÉN] {app_name} (AI Engine: {ai_provider.upper()}) ===")
 
         IMAGE_TAG = f"{DOCKER_USER}/{app_name}:latest"
         WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
@@ -333,12 +334,13 @@ QUY ĐỊNH K3S YAML (CẤM TỰ CHẾ TÊN & CẤM DÙNG NGINX):
                 full_prompt += f"\n\n[CẢNH BÁO TỪ HỆ THỐNG]: Lần Build trước thất bại với log:\n{build_error}\n\nHãy sửa nixpacks.toml hoặc mã nguồn cho đúng, BẮT BUỘC CHỈ TRẢ VỀ JSON!"
 
             try:
-                config_json = run_agy_json(full_prompt, app_name=app_name, cwd=WORKSPACE_DIR, timeout=25)
+                write_log(app_name, f"🤖 [AI Engine: {ai_provider.upper()}] Đang phân tích mã nguồn giải nén và sinh cấu hình...")
+                config_json = call_ai_json(full_prompt, app_name=app_name, cwd=WORKSPACE_DIR, timeout=90, ai_provider=ai_provider)
             except Exception as e:
-                write_log(app_name, f"⚠️ [LỖI AI/JSON] {e}. Đang yêu cầu AI thử lại...")
+                write_log(app_name, f"⚠️ [LỖI AI/JSON ({ai_provider.upper()})] {e}. Đang yêu cầu AI thử lại...")
                 build_error = f"Lỗi phân tích cú pháp JSON: {e}"
                 if attempt == MAX_RETRIES:
-                    raise Exception(f"AI liên tục sinh lỗi sau {MAX_RETRIES} lần thử: {e}")
+                    raise Exception(f"AI ({ai_provider.upper()}) liên tục sinh lỗi sau {MAX_RETRIES} lần thử: {e}")
                 continue
 
             user_action = config_json.get("user_action_required", "").strip()
@@ -537,7 +539,8 @@ def deploy_archive_with_db(
     app_name: str,
     app_domain: str,
     db_type: str,
-    backup_file_path: str = ""
+    backup_file_path: str = "",
+    ai_provider: str = "agy"
 ):
     """
     Triển khai mã nguồn từ file nén kèm theo cấp phát Database K8s nội bộ.
@@ -545,7 +548,7 @@ def deploy_archive_with_db(
     Bọc toàn bộ task trong try...except và stream log thời gian thực.
     """
     try:
-        write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI TỪ FILE NÉN CÓ DATABASE] {app_name} ({db_type.upper()}) ===")
+        write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI TỪ FILE NÉN CÓ DATABASE] {app_name} ({db_type.upper()}) (AI Engine: {ai_provider.upper()}) ===")
         WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
         os.makedirs(BASE_WORKSPACE, exist_ok=True)
         if os.path.exists(WORKSPACE_DIR):
@@ -650,9 +653,9 @@ def deploy_archive_with_db(
         db_info["db_name"] = db_name
 
         # Bước 4: AI phân tích mã nguồn và inject DATABASE_URL vào code
-        write_log(app_name, "\n[5] Đang cấu hình kết nối Database vào mã nguồn...")
+        write_log(app_name, f"\n[5] Đang cấu hình kết nối Database vào mã nguồn (AI: {ai_provider.upper()})...")
         detected_port = analyze_and_fix_backend(
-            WORKSPACE_DIR, app_name, app_domain, db_info
+            WORKSPACE_DIR, app_name, app_domain, db_info, ai_provider=ai_provider
         )
 
         # Tự động vá ESM/CommonJS cho Node.js

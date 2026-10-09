@@ -167,10 +167,10 @@ def merge_properties_content(orig_content: str, new_content: str) -> str:
             
     return "\n".join(updated_lines) + "\n"
 
-# --- HÀM GỌI AI (ANTIGRAVITY CLI) ---
-def call_hermes_ai(prompt_text: str, app_name: str) -> dict:
-    from builder_core import run_agy_json
-    return run_agy_json(prompt_text, app_name=app_name, timeout=90)
+# --- HÀM GỌI AI ĐIỀU PHỐI (AGY HOẶC HERMES) ---
+def call_hermes_ai(prompt_text: str, app_name: str, ai_provider: str = "agy") -> dict:
+    from builder_core import call_ai_json
+    return call_ai_json(prompt_text, app_name=app_name, timeout=90, ai_provider=ai_provider)
 
 # --- BỘ ĐỊNH TUYẾN DATABASE ---
 def get_db_strategy(db_type: str, app_name: str, db_password: str, workspace_dir: str):
@@ -560,8 +560,8 @@ def import_backup_to_db(db_type: str, db_pod_name: str, db_password: str, db_nam
                 pass
 
 # --- AI VÁ MÃ NGUỒN CHO BACKEND ---
-def analyze_and_fix_backend(workspace_dir: str, app_name: str, app_domain: str, db_info: dict):
-    write_log(app_name, "[AI] Đang phân tích mã nguồn Backend và cấu hình kết nối DB...")
+def analyze_and_fix_backend(workspace_dir: str, app_name: str, app_domain: str, db_info: dict, ai_provider: str = "agy"):
+    write_log(app_name, f"[AI ({ai_provider.upper()})] Đang phân tích mã nguồn Backend và cấu hình kết nối DB...")
     code_context = ""
     for root, dirs, files in os.walk(workspace_dir):
         if any(ignored in root for ignored in [".git", "node_modules", "venv", "vendor", "target", "k8s"]):
@@ -606,7 +606,7 @@ TRẢ VỀ DUY NHẤT ĐỐI TƯỢNG JSON (Không Markdown):
 """
     ai_port = None
     try:
-        ai_data = call_hermes_ai(prompt, app_name)
+        ai_data = call_hermes_ai(prompt, app_name, ai_provider=ai_provider)
         if "files_to_update" in ai_data:
             for file_data in ai_data["files_to_update"]:
                 raw_path = file_data['path'].lstrip('/')
@@ -672,8 +672,8 @@ API_URL={backend_url}
                     pass
 
 # --- 1. LUỒNG DEPLOY APP ĐƠN LẺ CÓ DATABASE ---
-def deploy_app_with_db(repo_url: str, app_name: str, app_domain: str, db_type: str, backup_file_path: str):
-    write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI] {app_name} ({db_type.upper()}) ===")
+def deploy_app_with_db(repo_url: str, app_name: str, app_domain: str, db_type: str, backup_file_path: str = "", ai_provider: str = "agy"):
+    write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI] {app_name} ({db_type.upper()}) (AI Engine: {ai_provider.upper()}) ===")
     WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
     
     try:
@@ -724,7 +724,7 @@ def deploy_app_with_db(repo_url: str, app_name: str, app_domain: str, db_type: s
         db_info["db_name"] = db_name
 
         write_log(app_name, "\n[5] Đang cấu hình ứng dụng...")
-        detected_port = analyze_and_fix_backend(WORKSPACE_DIR, app_name, app_domain, db_info)
+        detected_port = analyze_and_fix_backend(WORKSPACE_DIR, app_name, app_domain, db_info, ai_provider=ai_provider)
         
         # Tự động vá ESM/CommonJS cho Node.js
         auto_patch_nodejs_esm_conflicts(WORKSPACE_DIR, app_name)
@@ -758,8 +758,8 @@ def deploy_app_with_db(repo_url: str, app_name: str, app_domain: str, db_type: s
         write_log(app_name, "ERROR")
 
 # --- 2. LUỒNG DEPLOY FULLSTACK (2 REPO: FE + BE + DATABASE CHUNG) ---
-def deploy_fullstack_app(app_name: str, be_repo_url: str, be_domain: str, fe_repo_url: str, fe_domain: str, db_type: str, backup_file_path: str):
-    write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI FULLSTACK] {app_name} ===")
+def deploy_fullstack_app(app_name: str, be_repo_url: str, be_domain: str, fe_repo_url: str, fe_domain: str, db_type: str, backup_file_path: str = "", ai_provider: str = "agy"):
+    write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI FULLSTACK] {app_name} (AI Engine: {ai_provider.upper()}) ===")
     BE_APP_NAME = f"{app_name}-be"
     FE_APP_NAME = f"{app_name}-fe"
     
@@ -801,7 +801,7 @@ def deploy_fullstack_app(app_name: str, be_repo_url: str, be_domain: str, fe_rep
             run_cmd(["rm", "-rf", BE_WORKSPACE], app_name)
         run_cmd(["git", "clone", be_repo_url, BE_WORKSPACE], app_name)
         
-        be_port = analyze_and_fix_backend(BE_WORKSPACE, app_name, be_domain, db_info)
+        be_port = analyze_and_fix_backend(BE_WORKSPACE, app_name, be_domain, db_info, ai_provider=ai_provider)
         
         # Tự động vá lỗi cú pháp Node.js cho Backend của repo thứ 3
         auto_patch_nodejs_esm_conflicts(BE_WORKSPACE, app_name)

@@ -53,6 +53,31 @@ if file_manager_router:
 if hermes_agent_router:
     app.include_router(hermes_agent_router)
 
+@app.get("/api/ai-providers")
+def get_ai_providers():
+    """Trả về danh sách AI Engines được hỗ trợ trên hệ thống (Antigravity & Hermes)"""
+    from builder_core import AGY_MODELS, HERMES_MODELS
+    return {
+        "status": "success",
+        "default": "agy",
+        "providers": [
+            {
+                "id": "agy",
+                "name": "Google Antigravity (Gemini Flash)",
+                "badge": "Khuyên dùng - Nhanh (5-15s)",
+                "description": "Thực thi CLI trực tiếp trên VPS, tự động dự phòng 5 tầng Gemini Flash",
+                "models": AGY_MODELS
+            },
+            {
+                "id": "hermes",
+                "name": "Hermes Agent (Open-Source LLMs)",
+                "badge": "Mô hình mã nguồn mở",
+                "description": "Bộ não suy luận Hermes nguyên bản gọi qua API Gateway nội bộ",
+                "models": HERMES_MODELS
+            }
+        ]
+    }
+
 def get_app_config(app_name: str) -> dict:
     if not os.path.exists(CONFIG_DB_FILE):
         return {"auto_cicd": True}
@@ -97,6 +122,7 @@ class DeployRequest(BaseModel):
     app_name: str
     app_domain: str
     github_token: Optional[str] = None
+    ai_provider: Optional[str] = "agy"
 
 class AppConfigUpdate(BaseModel):
     auto_cicd: bool
@@ -120,6 +146,7 @@ class MonorepoDeployRequest(BaseModel):
     fe_domain: Optional[str] = None
     db_type: Optional[str] = "mysql"
     github_token: Optional[str] = None
+    ai_provider: Optional[str] = "agy"
 
 class RollbackRequest(BaseModel):
     component: Optional[str] = None  # "be", "fe", hoặc None (cho app single repo)
@@ -129,18 +156,20 @@ class RollbackRequest(BaseModel):
 async def trigger_deploy(req: DeployRequest, background_tasks: BackgroundTasks):
     final_url = prepare_repo_url(req.repo_url, req.github_token)
     owner = resolve_github_owner_from_token(req.github_token)
+    ai_engine = (req.ai_provider or "agy").lower().strip()
 
     with open(f"{LOG_DIR}/{req.app_name}.log", "w", encoding="utf-8") as f:
-        f.write(f"🚀 [INIT] Bắt đầu quy trình Deploy Web: {req.app_name} ({req.app_domain})...\n")
+        f.write(f"🚀 [INIT] Bắt đầu quy trình Deploy Web: {req.app_name} ({req.app_domain}) - AI: {ai_engine.upper()}...\n")
     
     save_app_config(req.app_name, {
         "auto_cicd": True,
         "repo_url": req.repo_url,
         "primary_github_owner": owner,
-        "has_token": bool(req.github_token)
+        "has_token": bool(req.github_token),
+        "ai_provider": ai_engine
     })
-    background_tasks.add_task(deploy_app, final_url, req.app_name, req.app_domain)
-    return {"status": "success", "message": f"Hệ thống đang tiến hành Deploy {req.app_name}."}
+    background_tasks.add_task(deploy_app, final_url, req.app_name, req.app_domain, ai_engine)
+    return {"status": "success", "message": f"Hệ thống đang tiến hành Deploy {req.app_name} (AI: {ai_engine.upper()})."}
 
 @app.post("/api/deploy-with-db")
 async def trigger_deploy_db(
@@ -150,10 +179,12 @@ async def trigger_deploy_db(
     app_domain: str = Form(...),
     db_type: str = Form(...),
     github_token: Optional[str] = Form(None),
-    backup_file: Optional[UploadFile] = File(None)
+    backup_file: Optional[UploadFile] = File(None),
+    ai_provider: Optional[str] = Form("agy")
 ):
     final_url = prepare_repo_url(repo_url, github_token)
     owner = resolve_github_owner_from_token(github_token)
+    ai_engine = (ai_provider or "agy").lower().strip()
     saved_backup_path = ""
     if backup_file and backup_file.filename:
         safe_filename = os.path.basename(backup_file.filename)
@@ -167,27 +198,30 @@ async def trigger_deploy_db(
             backup_file.file.close()
 
     with open(f"{LOG_DIR}/{app_name}.log", "w", encoding="utf-8") as f:
-        f.write(f"🚀 [INIT] Bắt đầu quy trình Deploy có Database: {app_name} ({db_type.upper()})...\n")
+        f.write(f"🚀 [INIT] Bắt đầu quy trình Deploy có Database: {app_name} ({db_type.upper()}) - AI: {ai_engine.upper()}...\n")
 
     save_app_config(app_name, {
         "auto_cicd": True,
         "repo_url": repo_url,
         "db_type": db_type,
         "primary_github_owner": owner,
-        "has_token": bool(github_token)
+        "has_token": bool(github_token),
+        "ai_provider": ai_engine
     })
-    background_tasks.add_task(deploy_app_with_db, final_url, app_name, app_domain, db_type, saved_backup_path)
-    return {"status": "success", "message": f"Đã tiếp nhận yêu cầu cấp phát {db_type.upper()} cho {app_name}."}
+    background_tasks.add_task(deploy_app_with_db, final_url, app_name, app_domain, db_type, saved_backup_path, ai_engine)
+    return {"status": "success", "message": f"Đã tiếp nhận yêu cầu cấp phát {db_type.upper()} cho {app_name} (AI: {ai_engine.upper()})."}
 
 @app.post("/api/deploy-archive")
 async def trigger_deploy_archive(
     background_tasks: BackgroundTasks,
     archive_file: UploadFile = File(...),
     app_name: str = Form(...),
-    app_domain: str = Form(...)
+    app_domain: str = Form(...),
+    ai_provider: Optional[str] = Form("agy")
 ):
     safe_filename = os.path.basename(archive_file.filename)
     saved_archive_path = f"{UPLOAD_DIR}/{app_name}_{safe_filename}"
+    ai_engine = (ai_provider or "agy").lower().strip()
     try:
         with open(saved_archive_path, "wb") as buffer:
             shutil.copyfileobj(archive_file.file, buffer)
@@ -197,19 +231,20 @@ async def trigger_deploy_archive(
         archive_file.file.close()
 
     with open(f"{LOG_DIR}/{app_name}.log", "w", encoding="utf-8") as f:
-        f.write(f"🚀 [INIT] Bắt đầu quy trình Deploy từ file nén: {app_name} ({safe_filename})...\n")
+        f.write(f"🚀 [INIT] Bắt đầu quy trình Deploy từ file nén: {app_name} ({safe_filename}) - AI: {ai_engine.upper()}...\n")
 
     save_app_config(app_name, {
         "auto_cicd": False,
         "deploy_type": "archive",
         "archive_filename": safe_filename,
-        "app_domain": app_domain
+        "app_domain": app_domain,
+        "ai_provider": ai_engine
     })
 
-    background_tasks.add_task(deploy_archive_app, saved_archive_path, app_name, app_domain)
+    background_tasks.add_task(deploy_archive_app, saved_archive_path, app_name, app_domain, ai_engine)
     return {
         "status": "success",
-        "message": f"Hệ thống đã nhận file nén [{safe_filename}] và đang tiến hành giải nén & triển khai {app_name}."
+        "message": f"Hệ thống đã nhận file nén [{safe_filename}] và đang tiến hành giải nén & triển khai {app_name} (AI: {ai_engine.upper()})."
     }
 
 @app.post("/api/deploy-archive-with-db")
@@ -219,10 +254,12 @@ async def trigger_deploy_archive_with_db(
     app_name: str = Form(...),
     app_domain: str = Form(...),
     db_type: str = Form(...),
-    backup_file: Optional[UploadFile] = File(None)
+    backup_file: Optional[UploadFile] = File(None),
+    ai_provider: Optional[str] = Form("agy")
 ):
     safe_filename = os.path.basename(archive_file.filename)
     saved_archive_path = f"{UPLOAD_DIR}/{app_name}_{safe_filename}"
+    ai_engine = (ai_provider or "agy").lower().strip()
     try:
         with open(saved_archive_path, "wb") as buffer:
             shutil.copyfileobj(archive_file.file, buffer)
@@ -244,14 +281,15 @@ async def trigger_deploy_archive_with_db(
             backup_file.file.close()
 
     with open(f"{LOG_DIR}/{app_name}.log", "w", encoding="utf-8") as f:
-        f.write(f"🚀 [INIT] Bắt đầu quy trình Deploy file nén có Database: {app_name} ({db_type.upper()})...\n")
+        f.write(f"🚀 [INIT] Bắt đầu quy trình Deploy file nén có Database: {app_name} ({db_type.upper()}) - AI: {ai_engine.upper()}...\n")
 
     save_app_config(app_name, {
         "auto_cicd": False,
         "deploy_type": "archive_with_db",
         "db_type": db_type,
         "archive_filename": safe_filename,
-        "app_domain": app_domain
+        "app_domain": app_domain,
+        "ai_provider": ai_engine
     })
 
     background_tasks.add_task(
@@ -260,11 +298,12 @@ async def trigger_deploy_archive_with_db(
         app_name,
         app_domain,
         db_type,
-        saved_backup_path
+        saved_backup_path,
+        ai_engine
     )
     return {
         "status": "success",
-        "message": f"Đã tiếp nhận file nén và yêu cầu cấp phát {db_type.upper()} cho {app_name}."
+        "message": f"Đã tiếp nhận file nén và yêu cầu cấp phát {db_type.upper()} cho {app_name} (AI: {ai_engine.upper()})."
     }
 
 @app.post("/api/deploy-fullstack")
@@ -277,11 +316,13 @@ async def trigger_deploy_fullstack(
     fe_domain: str = Form(...),
     db_type: str = Form(...),
     github_token: Optional[str] = Form(None),
-    backup_file: Optional[UploadFile] = File(None)
+    backup_file: Optional[UploadFile] = File(None),
+    ai_provider: Optional[str] = Form("agy")
 ):
     final_be_url = prepare_repo_url(be_repo_url, github_token)
     final_fe_url = prepare_repo_url(fe_repo_url, github_token)
     owner = resolve_github_owner_from_token(github_token)
+    ai_engine = (ai_provider or "agy").lower().strip()
 
     saved_backup_path = ""
     if backup_file and backup_file.filename:
@@ -296,7 +337,7 @@ async def trigger_deploy_fullstack(
             backup_file.file.close()
 
     with open(f"{LOG_DIR}/{app_name}.log", "w", encoding="utf-8") as f:
-        f.write(f"🚀 [INIT] Đã tiếp nhận yêu cầu triển khai Fullstack (2 Repos): {app_name}\n"
+        f.write(f"🚀 [INIT] Đã tiếp nhận yêu cầu triển khai Fullstack (2 Repos): {app_name} - AI: {ai_engine.upper()}\n"
                 f"   - Frontend: {fe_domain} ({fe_repo_url})\n"
                 f"   - Backend : {be_domain} ({be_repo_url})\n"
                 f"   - Database: {db_type.upper()}\n"
@@ -310,11 +351,12 @@ async def trigger_deploy_fullstack(
         "fe_domain": fe_domain,
         "db_type": db_type,
         "primary_github_owner": owner,
-        "has_token": bool(github_token)
+        "has_token": bool(github_token),
+        "ai_provider": ai_engine
     })
     background_tasks.add_task(
         deploy_fullstack_app,
-        app_name, final_be_url, be_domain, final_fe_url, fe_domain, db_type, saved_backup_path
+        app_name, final_be_url, be_domain, final_fe_url, fe_domain, db_type, saved_backup_path, ai_engine
     )
     return {
         "status": "success",
@@ -326,27 +368,30 @@ async def trigger_deploy_monorepo(req: MonorepoDeployRequest, background_tasks: 
     final_url = prepare_repo_url(req.repo_url, req.github_token)
     owner = resolve_github_owner_from_token(req.github_token)
 
+    ai_engine = (req.ai_provider or "agy").lower().strip()
     with open(f"{LOG_DIR}/{req.app_name}.log", "w", encoding="utf-8") as f:
-        f.write(f"🚀 [INIT] Tiếp nhận Monorepo Open Source: {req.app_name}\n"
+        f.write(f"🚀 [INIT] Tiếp nhận Monorepo Open Source: {req.app_name} (AI: {ai_engine.upper()})\n"
                 f"   - Repository : {req.repo_url}\n"
                 f"   - Backend API: {req.be_domain}\n"
                 f"   - Frontend UI: {req.fe_domain if req.fe_domain else 'None'}\n"
                 f"   - Database   : {req.db_type.upper()} (Auto-Schema / Empty)\n"
+                f"   - AI Engine  : {ai_engine.upper()}\n"
                 f"---------------------------------------------------\n")
 
     save_app_config(req.app_name, {
         "auto_cicd": True,
         "repo_url": req.repo_url,
         "primary_github_owner": owner,
-        "has_token": bool(req.github_token)
+        "has_token": bool(req.github_token),
+        "ai_provider": ai_engine
     })
     background_tasks.add_task(
         deploy_monorepo_app,
-        final_url, req.app_name, req.be_domain, req.fe_domain or "", req.db_type
+        final_url, req.app_name, req.be_domain, req.fe_domain or "", req.db_type, ai_engine
     )
     return {
         "status": "success",
-        "message": f"Đã tiếp nhận Monorepo {req.app_name}. Hệ thống đang tự động nhận diện và triển khai."
+        "message": f"Đã tiếp nhận Monorepo {req.app_name} (AI: {ai_engine.upper()}). Hệ thống đang tự động nhận diện và triển khai."
     }
 
 @app.post("/api/apps/{app_name}/sync-repo")

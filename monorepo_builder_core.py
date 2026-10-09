@@ -305,7 +305,7 @@ API_URL={be_api_url}
 
 
 # 8. LUỒNG TRIỂN KHAI MONOREPO ĐẦY ĐỦ
-def deploy_monorepo_app(repo_url: str, app_name: str, be_domain: str, fe_domain: str, db_type: str = "mysql"):
+def deploy_monorepo_app(repo_url: str, app_name: str, be_domain: str, fe_domain: str, db_type: str = "mysql", ai_provider: str = "agy"):
     write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI MONOREPO OPEN SOURCE] {app_name} ===")
     WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}-monorepo"
 
@@ -373,8 +373,8 @@ def deploy_monorepo_app(repo_url: str, app_name: str, be_domain: str, fe_domain:
             pass
 
         # BƯỚC 4: XỬ LÝ & BUILD BACKEND
-        write_log(app_name, f"\n[4] Cấu hình và Build Backend ({be_domain})...")
-        be_port = analyze_and_fix_backend(be_dir, app_name, be_domain, db_info)
+        write_log(app_name, f"\n[4] Cấu hình và Build Backend ({be_domain}) bằng AI engine: {ai_provider.upper()}...")
+        be_port = analyze_and_fix_backend(be_dir, app_name, be_domain, db_info, ai_provider=ai_provider)
         auto_patch_nodejs_esm_conflicts(be_dir, app_name)
         patch_backend_cors(be_dir, fe_domain, app_name)
 

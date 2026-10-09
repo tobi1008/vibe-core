@@ -21,7 +21,7 @@ BASE_WORKSPACE = "/opt/vibe-hosting/workspaces"
 LOGS_DIR = "/opt/vibe-hosting/logs"
 
 # ==========================================
-# CẤU HÌNH ANTIGRAVITY AI (GEMINI FLASH)
+# CẤU HÌNH AI ENGINES: ANTIGRAVITY (AGY) & HERMES
 # ==========================================
 AGY_MODELS = [
     "gemini-3.7-flash-high",
@@ -31,8 +31,19 @@ AGY_MODELS = [
     "gemini-3.8-flash-high",
 ]
 FALLBACK_MODELS = AGY_MODELS
-HERMES_API_URL = ""
-HEADERS = {}
+
+HERMES_API_URL = os.getenv("HERMES_API_URL", "http://127.0.0.1:8645/v1/chat/completions")
+HEADERS = {
+    "Content-Type": "application/json",
+    "Authorization": f"Bearer {os.getenv('INTERNAL_BEARER_TOKEN', '')}"
+}
+HERMES_MODELS = [
+    "stepfun/step-3.7-flash:free",
+    "poolside/laguna-s-2.1:free",
+    "meituan/longcat-2.5-preview:free",
+    "inclusionai/ling-3.0-flash-sante:free",
+    "poolside/laguna-xs-2.1:free"
+]
 
 def get_agy_bin() -> str:
     """Tự động tìm kiếm đường dẫn tuyệt đối của binary agy trên máy chủ"""
@@ -134,6 +145,109 @@ def run_agy_json(prompt: str, app_name: str = "system", cwd: Optional[str] = Non
     clean_json = re.sub(r'\\(?![/"\\bfnrtu])', r'\\\\', clean_json)
     return json.loads(clean_json)
 
+def run_hermes_prompt(prompt: str, app_name: str = "system", timeout: int = 90, preferred_model: Optional[str] = None) -> str:
+    """
+    Thực thi prompt thông qua Hermes API gateway (OpenAI-compatible HTTP endpoint).
+    Tự động fallback giữa các mô hình trong HERMES_MODELS.
+    """
+    models_to_try = [preferred_model] if preferred_model and preferred_model in HERMES_MODELS else []
+    for m in HERMES_MODELS:
+        if m not in models_to_try:
+            models_to_try.append(m)
+
+    payload = {
+        "messages": [
+            {"role": "user", "content": prompt}
+        ]
+    }
+
+    last_err = ""
+    for model_name in models_to_try:
+        payload["model"] = model_name
+        try:
+            write_log(app_name, f"🤖 [Hermes AI] Đang gửi yêu cầu tới Model [{model_name}]...")
+            resp = requests.post(HERMES_API_URL, headers=HEADERS, json=payload, timeout=timeout)
+            if resp.status_code == 200:
+                write_log(app_name, f"✅ [Hermes AI] Model [{model_name}] phản hồi thành công!")
+                return resp.json()['choices'][0]['message']['content'].strip()
+            elif resp.status_code == 429:
+                write_log(app_name, f"⚠️ Model [{model_name}] bị Rate Limit (429). Chuyển model dự phòng...")
+                last_err = f"Rate Limit (429) trên {model_name}"
+                continue
+            else:
+                err_text = resp.text[:120]
+                write_log(app_name, f"⚠️ Model [{model_name}] trả về lỗi {resp.status_code} ({err_text}). Thử model tiếp theo...")
+                last_err = f"HTTP {resp.status_code}: {err_text}"
+                continue
+        except subprocess.TimeoutExpired:
+            write_log(app_name, f"⚠️ Model [{model_name}] quá thời gian chờ ({timeout}s). Chuyển model dự phòng...")
+            last_err = f"Timeout {timeout}s"
+            continue
+        except Exception as e:
+            write_log(app_name, f"⚠️ Lỗi kết nối Hermes [{model_name}]: {str(e)}. Thử model tiếp theo...")
+            last_err = str(e)
+            continue
+
+    raise Exception(f"Tất cả các Model Hermes đều không phản hồi: {last_err}")
+
+def run_hermes_json(prompt: str, app_name: str = "system", timeout: int = 90, preferred_model: Optional[str] = None) -> dict:
+    """
+    Gọi Hermes API và bóc tách dữ liệu JSON an toàn từ kết quả trả về.
+    """
+    raw_output = run_hermes_prompt(prompt, app_name=app_name, timeout=timeout, preferred_model=preferred_model)
+    json_match = re.search(r'\{.*\}', raw_output, re.DOTALL)
+    if json_match:
+        clean_json = json_match.group(0)
+    else:
+        clean_json = raw_output.strip()
+        clean_json = re.sub(r"^`{1,3}(?:json)?\s*", "", clean_json, flags=re.IGNORECASE)
+        clean_json = re.sub(r"\s*`{1,3}$", "", clean_json)
+
+    clean_json = re.sub(r'\\(?![/"\\bfnrtu])', r'\\\\', clean_json)
+    return json.loads(clean_json)
+
+def call_ai_json(
+    prompt: str,
+    app_name: str = "system",
+    cwd: Optional[str] = None,
+    timeout: Optional[int] = None,
+    preferred_model: Optional[str] = None,
+    ai_provider: str = "agy"
+) -> dict:
+    """
+    Bộ điều phối AI Engine hợp nhất:
+    - 'agy': Google Antigravity CLI (Gemini Flash)
+    - 'hermes': Hermes SRE Agent (Open-source LLMs qua API Gateway)
+    """
+    provider = (ai_provider or "agy").lower().strip()
+    if provider == "hermes":
+        to = timeout or 90
+        return run_hermes_json(prompt, app_name=app_name, timeout=to, preferred_model=preferred_model)
+    else:
+        to = timeout or 30
+        return run_agy_json(prompt, app_name=app_name, cwd=cwd, timeout=to, preferred_model=preferred_model)
+
+def call_ai_prompt(
+    prompt: str,
+    app_name: str = "system",
+    cwd: Optional[str] = None,
+    timeout: Optional[int] = None,
+    preferred_model: Optional[str] = None,
+    ai_provider: str = "agy"
+) -> str:
+    """
+    Bộ điều phối AI dạng Text/Chat tự do:
+    - 'agy': Google Antigravity CLI
+    - 'hermes': Hermes SRE Agent
+    """
+    provider = (ai_provider or "agy").lower().strip()
+    if provider == "hermes":
+        to = timeout or 90
+        return run_hermes_prompt(prompt, app_name=app_name, timeout=to, preferred_model=preferred_model)
+    else:
+        to = timeout or 30
+        return run_agy_prompt(prompt, app_name=app_name, cwd=cwd, timeout=to, preferred_model=preferred_model)
+
 def write_log(app_name, message):
     os.makedirs(LOGS_DIR, exist_ok=True)
     with open(f"{LOGS_DIR}/{app_name}.log", "a", encoding="utf-8") as f:
@@ -152,10 +266,10 @@ def run_cmd(cmd, app_name, cwd=None):
         write_log(app_name, error_msg)
         raise Exception(error_msg)
 
-def deploy_app(repo_url: str, app_name: str, app_domain: str):
+def deploy_app(repo_url: str, app_name: str, app_domain: str, ai_provider: str = "agy"):
     os.makedirs(LOGS_DIR, exist_ok=True)
     with open(f"{LOGS_DIR}/{app_name}.log", "w", encoding="utf-8") as f:
-        f.write(f"=== [BẮT ĐẦU DEPLOY] {app_name} ===\n")
+        f.write(f"=== [BẮT ĐẦU DEPLOY] {app_name} (AI Engine: {ai_provider.upper()}) ===\n")
 
     IMAGE_TAG = f"{DOCKER_USER}/{app_name}:latest"
     WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
@@ -280,12 +394,13 @@ QUY ĐỊNH K3S YAML (CẤM TỰ CHẾ TÊN & CẤM DÙNG NGINX):
                 full_prompt += f"\n\n[CẢNH BÁO TỪ HỆ THỐNG]: Lần Build trước thất bại với log:\n{build_error}\n\nHãy sửa nixpacks.toml hoặc mã nguồn cho đúng, BẮT BUỘC CHỈ TRẢ VỀ JSON!"
 
             try:
-                config_json = run_agy_json(full_prompt, app_name=app_name, cwd=WORKSPACE_DIR, timeout=90)
+                write_log(app_name, f"🤖 [AI Engine: {ai_provider.upper()}] Đang phân tích mã nguồn và sinh cấu hình...")
+                config_json = call_ai_json(full_prompt, app_name=app_name, cwd=WORKSPACE_DIR, timeout=90, ai_provider=ai_provider)
             except Exception as e:
-                write_log(app_name, f"⚠️ [LỖI AI/JSON] {e}. Đang yêu cầu AI thử lại...")
+                write_log(app_name, f"⚠️ [LỖI AI/JSON ({ai_provider.upper()})] {e}. Đang yêu cầu AI thử lại...")
                 build_error = f"Lỗi phân tích cú pháp JSON: {e}"
                 if attempt == MAX_RETRIES:
-                    raise Exception(f"AI liên tục sinh lỗi sau {MAX_RETRIES} lần thử: {e}")
+                    raise Exception(f"AI ({ai_provider.upper()}) liên tục sinh lỗi sau {MAX_RETRIES} lần thử: {e}")
                 continue
 
             user_action = config_json.get("user_action_required", "").strip()
