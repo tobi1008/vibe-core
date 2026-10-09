@@ -42,6 +42,8 @@ HERMES_MODELS = [
     "poolside/laguna-s-2.1:free",
     "meituan/longcat-2.5-preview:free",
     "inclusionai/ling-3.0-flash-sante:free",
+    "nvidia/nemotron-3-ultra:free",
+    "openrouter/free",
     "poolside/laguna-xs-2.1:free"
 ]
 
@@ -388,6 +390,11 @@ QUY ĐỊNH K3S YAML (CẤM TỰ CHẾ TÊN & CẤM DÙNG NGINX):
       - hosts:
         - {app_domain}
         secretName: {app_name}-tls
+
+QUY ĐỊNH "user_action_required" (CỰC KỲ QUAN TRỌNG):
+- "user_action_required" BẮT BUỘC PHẢI LÀ CHUỖI RỖNG "" nếu bạn có thể sinh ra cấu hình nixpacks_toml và k3s_deployment.
+- TUYỆT ĐỐI KHÔNG giải thích những gì bạn đã làm, KHÔNG đưa ra lời khuyên hoặc hướng dẫn triển khai vào trường này.
+- CHỈ ĐƯỢC điền vào "user_action_required" khi và chỉ khi mã nguồn bị lỗi nghiêm trọng không thể chạy được hoặc thiếu file cốt lõi. Nếu đã sinh đủ YAML, trường này BẮT BUỘC LÀ "".
 """
             full_prompt = f"{system_prompt}\n\nĐây là mã nguồn:\n{code_context}"
             if build_error:
@@ -404,9 +411,14 @@ QUY ĐỊNH K3S YAML (CẤM TỰ CHẾ TÊN & CẤM DÙNG NGINX):
                 continue
 
             user_action = config_json.get("user_action_required", "").strip()
-            if user_action:
+            k3s_dep = config_json.get("k3s_deployment", "").strip()
+            nix_toml = config_json.get("nixpacks_toml", "").strip()
+
+            if user_action and (not k3s_dep or not nix_toml):
                 write_log(app_name, f"\n❌ [CẢNH BÁO TỪ HỆ THỐNG AI]\nPhát hiện lỗi mã nguồn cần bạn tự can thiệp:\n----------------------------------------\n{user_action}\n----------------------------------------\n-> VUI LÒNG SỬA MÃ NGUỒN VÀ DEPLOY LẠI!")
                 raise Exception("Hệ thống dừng lại để chờ người dùng sửa mã nguồn.")
+            elif user_action:
+                write_log(app_name, f"💡 [AI GHI CHÚ]: {user_action}")
 
             patches = config_json.get("auto_patches", [])
             for patch in patches:
