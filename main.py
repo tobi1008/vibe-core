@@ -13,7 +13,11 @@ from archive_builder_core import deploy_archive_app, deploy_archive_with_db, UPL
 from cicd_core import redeploy_app
 from db_builder_core import deploy_app_with_db, deploy_fullstack_app, delete_app_db_resources
 from monorepo_builder_core import deploy_monorepo_app
-from cms_builder_core import deploy_cms_app, delete_cms_db_resources
+try:
+    from cms_builder_core import deploy_cms_app, delete_cms_db_resources
+except Exception as e:
+    deploy_cms_app = None
+    delete_cms_db_resources = None
 import requests
 
 # Nạp router File Manager & Git an toàn
@@ -259,6 +263,9 @@ async def trigger_deploy_open_source(req: OpenSourceDeployRequest, background_ta
         "has_token": bool(req.github_token),
         "ai_provider": ai_engine
     })
+
+    if not deploy_cms_app:
+        return {"status": "error", "message": "CMS Builder module chưa sẵn sàng hoặc bị thiếu trên máy chủ."}
 
     background_tasks.add_task(
         deploy_cms_app,

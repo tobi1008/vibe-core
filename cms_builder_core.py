@@ -21,7 +21,9 @@ from builder_core import (
     AGY_MODELS,
     run_agy_json,
     run_agy_prompt,
-    query_hermes_ai,
+    run_hermes_json,
+    run_hermes_prompt,
+    call_ai_json,
 )
 
 # --- HELPER CƠ BẢN VỀ DATABASE & CMS ---
@@ -450,10 +452,7 @@ Trả về DUY NHẤT một JSON hợp lệ:
 }}
 """
         try:
-            if ai_provider == "hermes":
-                res_ai = query_hermes_ai(prompt, app_name)
-            else:
-                res_ai = run_agy_json(prompt, app_name, workspace_dir=workspace_dir)
+            res_ai = call_ai_json(prompt, app_name=app_name, cwd=workspace_dir, ai_provider=ai_provider)
 
             if isinstance(res_ai, dict):
                 for f_item in res_ai.get("files_to_update", []):
