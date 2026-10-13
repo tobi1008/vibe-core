@@ -198,13 +198,13 @@ class MonorepoDeployRequest(BaseModel):
     ai_provider: Optional[str] = "agy"
 
 class OpenSourceDeployRequest(BaseModel):
-    repo_url: Optional[str] = "wordpress"
+    repo_url: str
     app_name: str
     app_domain: str
     db_type: Optional[str] = "mysql"
     github_token: Optional[str] = None
     ai_provider: Optional[str] = "agy"
-    cms_type: Optional[str] = "wordpress"
+    cms_type: Optional[str] = None
 
 class RollbackRequest(BaseModel):
     component: Optional[str] = None  # "be", "fe", hoặc None (cho app single repo)
@@ -232,18 +232,18 @@ async def trigger_deploy(req: DeployRequest, background_tasks: BackgroundTasks):
 @app.post("/api/deploy-open-source")
 async def trigger_deploy_open_source(req: OpenSourceDeployRequest, background_tasks: BackgroundTasks):
     """
-    API Triển khai CMS (WordPress mặc định) hoặc bất kỳ repo mã nguồn mở nào với Clean Database (DB Trắng)
+    API Triển khai CMS hoặc bất kỳ repo mã nguồn mở nào với Clean Database (DB Trắng)
     Không yêu cầu người dùng nạp file backup SQL.
     """
     target_repo = (req.repo_url or "").strip()
     cms_type = (req.cms_type or "").strip().lower()
 
-    if not target_repo or target_repo.lower() in ["wordpress", "wp", "default"] or cms_type == "wordpress":
+    if not target_repo or target_repo.lower() in ["wordpress", "wp", "default"]:
         final_url = "https://github.com/WordPress/WordPress.git"
         detected_cms = "wordpress"
     else:
         final_url = prepare_repo_url(target_repo, req.github_token)
-        detected_cms = cms_type or "custom"
+        detected_cms = cms_type if cms_type else "custom"
 
     owner = resolve_github_owner_from_token(req.github_token)
     ai_engine = (req.ai_provider or "agy").lower().strip()

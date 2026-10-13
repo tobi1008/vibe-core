@@ -205,7 +205,7 @@ def deploy_cms_app(
     app_domain: str,
     db_type: str = "mysql",
     ai_provider: str = "agy",
-    cms_type: str = "wordpress"
+    cms_type: Optional[str] = None
 ):
     """
     Quy trình triển khai CMS / Open-Source:
