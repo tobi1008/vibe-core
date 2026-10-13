@@ -95,13 +95,18 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
     ]
     custom_env["PATH"] = ":".join(extra_dirs) + ":" + custom_env.get("PATH", "")
 
+    # Bảo vệ chống lỗi Linux E2BIG / [Errno 7] Argument list too long
+    safe_prompt = prompt
+    if len(safe_prompt) > 70000:
+        safe_prompt = safe_prompt[:70000] + "\n\n... [Nội dung prompt đã được rút gọn để đảm bảo an toàn bộ nhớ tham số Linux]"
+
     last_err = ""
     for model_name in models_to_try:
         try:
             write_log(app_name, f"🤖 [Antigravity AI] Đang gửi yêu cầu tới Model [{model_name}]...")
             cmd = [
                 agy_bin,
-                "-p", prompt,
+                "-p", safe_prompt,
                 "--model", model_name,
                 "--dangerously-skip-permissions"
             ]
@@ -331,20 +336,33 @@ def deploy_app(repo_url: str, app_name: str, app_domain: str, ai_provider: str =
         # ==================================================
 
         write_log(app_name, "[2] Đang quét cấu trúc mã nguồn...")
-        tree_output = run_cmd(["tree", "-I", "node_modules|.git|venv", WORKSPACE_DIR], app_name)
+        try:
+            tree_output = run_cmd(["tree", "-L", "3", "-I", "node_modules|.git|venv|vendor|dist|build|target|wp-includes|wp-admin|.cache", WORKSPACE_DIR], app_name)
+        except Exception:
+            tree_output = "Không thể chạy lệnh tree. Tiếp tục phân tích các file cốt lõi."
+
+        if len(tree_output) > 8000:
+            tree_output = tree_output[:8000] + "\n... [Cắt bớt danh sách file vì quá dài]"
         code_context = tree_output
 
         core_files = [
-            "package.json", "requirements.txt", "composer.json", "go.mod",
+            "package.json", "requirements.txt", "composer.json", "go.mod", "pom.xml",
             "app.py", "main.py", "index.js", "server.js",
-            "vite.config.js", "vite.config.ts"
+            "vite.config.js", "vite.config.ts", "wp-config.php", "wp-config-sample.php"
         ]
 
         for config_file in core_files:
             file_path = os.path.join(WORKSPACE_DIR, config_file)
             if os.path.exists(file_path):
-                with open(file_path, "r", encoding="utf-8") as f:
-                    code_context += f"\n\n--- Nội dung {config_file} ---\n" + f.read()
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        code_context += f"\n\n--- Nội dung {config_file} ---\n" + f.read(4000)
+                except Exception:
+                    pass
+
+        # Giới hạn tổng dung lượng code_context tối đa 30KB
+        if len(code_context) > 30000:
+            code_context = code_context[:30000] + "\n... [Đã cắt ngắn bối cảnh mã nguồn]"
 
         MAX_RETRIES = 3
         build_error = ""

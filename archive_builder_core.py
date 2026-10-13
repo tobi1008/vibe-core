@@ -255,20 +255,33 @@ def deploy_archive_app(archive_path: str, app_name: str, app_domain: str, ai_pro
 
         # Bước 2: Quét cấu trúc mã nguồn
         write_log(app_name, "[2] Đang quét cấu trúc mã nguồn dự án...")
-        tree_output = run_cmd(["tree", "-I", "node_modules|.git|venv|dist|build", WORKSPACE_DIR], app_name)
+        try:
+            tree_output = run_cmd(["tree", "-L", "3", "-I", "node_modules|.git|venv|vendor|dist|build|target|wp-includes|wp-admin|.cache", WORKSPACE_DIR], app_name)
+        except Exception:
+            tree_output = "Không thể chạy lệnh tree. Tiếp tục phân tích các file cốt lõi."
+
+        if len(tree_output) > 8000:
+            tree_output = tree_output[:8000] + "\n... [Cắt bớt danh sách file vì quá dài]"
         code_context = tree_output
 
         core_files = [
             "package.json", "requirements.txt", "composer.json", "go.mod", "pom.xml",
             "app.py", "main.py", "index.js", "server.js",
-            "vite.config.js", "vite.config.ts", "Dockerfile"
+            "vite.config.js", "vite.config.ts", "Dockerfile", "wp-config.php", "wp-config-sample.php"
         ]
 
         for config_file in core_files:
             file_path = os.path.join(WORKSPACE_DIR, config_file)
             if os.path.exists(file_path):
-                with open(file_path, "r", encoding="utf-8") as f:
-                    code_context += f"\n\n--- Nội dung {config_file} ---\n" + f.read()
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        code_context += f"\n\n--- Nội dung {config_file} ---\n" + f.read(4000)
+                except Exception:
+                    pass
+
+        # Giới hạn tổng dung lượng code_context tối đa 30KB
+        if len(code_context) > 30000:
+            code_context = code_context[:30000] + "\n... [Đã cắt ngắn bối cảnh mã nguồn]"
 
         MAX_RETRIES = 3
         build_error = ""
