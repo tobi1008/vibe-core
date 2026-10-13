@@ -281,8 +281,12 @@ def deploy_cms_app(
             detected_port = 80
             write_log(app_name, "   -> [WordPress] Hoàn tất kết nối Database vào wp-config.php (Cổng hoạt động: 80).")
         else:
-            setup_opensource_env(WORKSPACE_DIR, app_name, app_domain, db_info)
-            detected_port = analyze_and_fix_backend(WORKSPACE_DIR, app_name, app_domain, db_info, ai_provider=ai_provider)
+            has_env = setup_opensource_env(WORKSPACE_DIR, app_name, app_domain, db_info)
+            if has_env:
+                detected_port = detect_app_port(WORKSPACE_DIR)
+                write_log(app_name, f"   -> [Open-Source .env] Đã kết nối Database ({db_type.upper()}) vào file .env thành công (Cổng dịch vụ: {detected_port})!")
+            else:
+                detected_port = analyze_and_fix_backend(WORKSPACE_DIR, app_name, app_domain, db_info, ai_provider=ai_provider)
 
         auto_patch_nodejs_esm_conflicts(WORKSPACE_DIR, app_name)
 

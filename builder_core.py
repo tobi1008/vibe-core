@@ -72,7 +72,7 @@ def get_agy_bin() -> str:
             return p
     return "agy"
 
-def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 25, preferred_model: Optional[str] = None) -> str:
+def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 75, preferred_model: Optional[str] = None) -> str:
     """
     Thực thi prompt thông qua Antigravity CLI (agy) trực tiếp trên máy chủ.
     Tự động fallback giữa các phiên bản Gemini Flash.
@@ -246,7 +246,7 @@ def call_ai_json(
         to = timeout or 90
         return run_hermes_json(prompt, app_name=app_name, timeout=to, preferred_model=preferred_model)
     else:
-        to = timeout if (timeout and timeout <= 45) else 35
+        to = timeout or 75
         return run_agy_json(prompt, app_name=app_name, cwd=cwd, timeout=to, preferred_model=preferred_model)
 
 def call_ai_prompt(
@@ -267,7 +267,7 @@ def call_ai_prompt(
         to = timeout or 90
         return run_hermes_prompt(prompt, app_name=app_name, timeout=to, preferred_model=preferred_model)
     else:
-        to = timeout if (timeout and timeout <= 45) else 35
+        to = timeout or 75
         return run_agy_prompt(prompt, app_name=app_name, cwd=cwd, timeout=to, preferred_model=preferred_model)
 
 def write_log(app_name, message):

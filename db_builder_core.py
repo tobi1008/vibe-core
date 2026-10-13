@@ -118,13 +118,41 @@ def detect_app_port(workspace_dir: str, ai_suggested_port: int = None) -> int:
         except Exception:
             pass
 
-    # 3. Python
+    # 2. PHP (Laravel, Symfony, WordPress, v.v.)
+    if os.path.exists(os.path.join(workspace_dir, "composer.json")) or \
+       os.path.exists(os.path.join(workspace_dir, "artisan")) or \
+       os.path.exists(os.path.join(workspace_dir, "index.php")):
+        return 80
+
+    # 3. NodeJS / Frontend SPA (React, Vite, Vue) / Express / NestJS
+    pkg_path = os.path.join(workspace_dir, "package.json")
+    if os.path.exists(pkg_path):
+        try:
+            with open(pkg_path, "r", encoding="utf-8") as f:
+                pkg_data = json.load(f)
+            deps = {**pkg_data.get("dependencies", {}), **pkg_data.get("devDependencies", {})}
+            
+            for env_name in [".env", ".env.local", ".env.production"]:
+                env_file = os.path.join(workspace_dir, env_name)
+                if os.path.exists(env_file):
+                    with open(env_file, "r", encoding="utf-8") as ef:
+                        m = re.search(r'^\s*PORT\s*=\s*(\d+)', ef.read(), re.MULTILINE)
+                        if m:
+                            return int(m.group(1))
+
+            is_spa = any(k in deps for k in ["vite", "react", "vue", "@angular/core", "svelte"])
+            has_node_server = any(k in deps for k in ["express", "@nestjs/core", "koa", "fastify", "socket.io"])
+            
+            if is_spa and not has_node_server:
+                return 3000
+            elif has_node_server:
+                return 3000 if not ai_suggested_port else ai_suggested_port
+        except Exception:
+            pass
+
+    # 4. Python
     if os.path.exists(os.path.join(workspace_dir, "requirements.txt")) or os.path.exists(os.path.join(workspace_dir, "Pipfile")):
         return 8000 if not ai_suggested_port else ai_suggested_port
-
-    # 4. PHP
-    if os.path.exists(os.path.join(workspace_dir, "composer.json")) or os.path.exists(os.path.join(workspace_dir, "index.php")):
-        return 80
 
     if ai_suggested_port and isinstance(ai_suggested_port, int) and ai_suggested_port > 0:
         return ai_suggested_port
