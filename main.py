@@ -14,10 +14,9 @@ from cicd_core import redeploy_app
 from db_builder_core import deploy_app_with_db, deploy_fullstack_app, delete_app_db_resources
 from monorepo_builder_core import deploy_monorepo_app
 try:
-    from cms_builder_core import deploy_cms_app, delete_cms_db_resources
-except Exception as e:
+    from cms_builder_core import deploy_cms_app
+except Exception:
     deploy_cms_app = None
-    delete_cms_db_resources = None
 import requests
 
 # Nạp router File Manager & Git an toàn
@@ -535,11 +534,6 @@ def purge_app_workspace_and_configs(app_name: str):
     - Dọn dẹp apps_config.json và file log
     """
     # 1. Dọn dẹp tài nguyên Kubernetes và Database
-    try:
-        delete_cms_db_resources(app_name)
-    except Exception:
-        pass
-
     try:
         delete_app_db_resources(app_name)
     except Exception:

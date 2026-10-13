@@ -1,48 +1,46 @@
+"""
+CMS & Open-Source Builder Core
+Triển khai CMS (WordPress, Ghost, v.v.) hoặc bất kỳ repository mã nguồn mở nào từ GitHub
+với Clean Database (Database Trắng tự động) - không cần file backup SQL.
+Tự động phân tích mã nguồn, tạo Pod Database tương ứng, kết nối Database vào mã nguồn,
+đóng gói Nixpacks và triển khai lên Kubernetes K3s.
+"""
+
 import os
-import subprocess
-import time
-import random
-import string
-import json
 import re
 import shutil
 import secrets
-from typing import Optional, Dict, Any, List
+import string
+import subprocess
+import time
+from typing import Optional
 
-from builder_core import (
-    write_log,
-    run_cmd,
-    DOCKER_USER,
-    BASE_WORKSPACE,
-    K8S_NAMESPACE,
-    HERMES_API_URL,
-    HEADERS,
-    FALLBACK_MODELS,
-    AGY_MODELS,
-    run_agy_json,
-    run_agy_prompt,
-    run_hermes_json,
-    run_hermes_prompt,
-    call_ai_json,
+from builder_core import write_log, run_cmd, DOCKER_USER, K8S_NAMESPACE, BASE_WORKSPACE
+from db_builder_core import (
+    generate_db_password,
+    get_db_strategy,
+    generate_db_manifest,
+    analyze_and_fix_backend,
+    auto_patch_nodejs_esm_conflicts,
+    generate_standard_deployment,
+    generate_standard_service,
+    generate_standard_ingress,
+    detect_app_port,
 )
 
-# --- HELPER CƠ BẢN VỀ DATABASE & CMS ---
-
-def generate_db_password(length: int = 14) -> str:
-    chars = string.ascii_letters + string.digits
-    return ''.join(random.choice(chars) for _ in range(length))
 
 def generate_wp_salt() -> str:
-    """Tạo chuỗi salt an toàn 64 ký tự cho WordPress wp-config.php"""
+    """Tạo chuỗi salt ngẫu nhiên an toàn 64 ký tự cho WordPress wp-config.php"""
     chars = string.ascii_letters + string.digits + "!@#$%^&*()-_ []{}~`+=,.;:/?|"
     return ''.join(secrets.choice(chars) for _ in range(64)).replace('\\', '').replace("'", "")
 
-def build_database_url(db_info: dict, host_override: str = None) -> str:
-    """Tạo connection string DATABASE_URL chuẩn cho các mã nguồn mở"""
+
+def build_database_url(db_info: dict) -> str:
+    """Tạo chuỗi connection string DATABASE_URL cho mã nguồn mở"""
     db_type = db_info.get("type", "mysql").lower()
     user = db_info.get("user", "root")
     password = db_info.get("password", "")
-    host = host_override or db_info.get("host", "localhost")
+    host = db_info.get("host", "localhost")
     port = db_info.get("port", 3306)
     db_name = db_info.get("db_name", "")
 
@@ -54,211 +52,16 @@ def build_database_url(db_info: dict, host_override: str = None) -> str:
         return f"mongodb://{user}:{password}@{host}:{port}/{db_name}?authSource=admin"
     return ""
 
-def detect_cms_app_port(workspace_dir: str, default_port: int = 80) -> int:
-    """Tự động nhận diện cổng ứng dụng cho CMS & Open Source"""
-    # 1. WordPress / PHP -> Luôn là port 80
-    if os.path.exists(os.path.join(workspace_dir, "wp-config.php")) or \
-       os.path.exists(os.path.join(workspace_dir, "wp-config-sample.php")) or \
-       os.path.exists(os.path.join(workspace_dir, "index.php")):
-        return 80
 
-    # 2. Node.js (Ghost CMS, Strapi, Express, NestJS)
-    pkg_path = os.path.join(workspace_dir, "package.json")
-    if os.path.exists(pkg_path):
-        for env_name in [".env", ".env.local", ".env.production"]:
-            env_file = os.path.join(workspace_dir, env_name)
-            if os.path.exists(env_file):
-                try:
-                    with open(env_file, "r", encoding="utf-8") as ef:
-                        m = re.search(r'^\s*PORT\s*=\s*(\d+)', ef.read(), re.MULTILINE)
-                        if m:
-                            return int(m.group(1))
-                except Exception:
-                    pass
-        return 3000
-
-    # 3. Python (Django, Wagtail CMS)
-    if os.path.exists(os.path.join(workspace_dir, "requirements.txt")) or \
-       os.path.exists(os.path.join(workspace_dir, "manage.py")):
-        return 8000
-
-    return default_port
-
-# --- CHIẾN LƯỢC CẤP PHÁT DATABASE STATEFULSET CHO CMS ---
-
-def get_db_strategy(db_type: str, app_name: str, db_password: str) -> dict:
-    db_type = db_type.lower()
-    app_user = f"user_{app_name}".replace("-", "_")[:16]
-    db_name = f"{app_name}_db".replace("-", "_")
-
-    if db_type == "mysql":
-        return {
-            "image": "mysql:8.0",
-            "port": 3306,
-            "db_name_env": "MYSQL_DATABASE",
-            "db_pass_env": "MYSQL_PASSWORD",
-            "db_user": app_user,
-            "mount_path": "/var/lib/mysql",
-            "extra_env": [
-                {"name": "MYSQL_USER", "value": app_user},
-                {"name": "MYSQL_ROOT_PASSWORD", "value": generate_db_password(16)}
-            ],
-            "connection_info": {
-                "host": f"{app_name}-db-svc",
-                "user": app_user,
-                "port": 3306,
-                "type": "mysql",
-                "db_name": db_name,
-                "password": db_password
-            }
-        }
-    elif db_type == "mariadb":
-        return {
-            "image": "mariadb:10.11",
-            "port": 3306,
-            "db_name_env": "MARIADB_DATABASE",
-            "db_pass_env": "MARIADB_PASSWORD",
-            "db_user": app_user,
-            "mount_path": "/var/lib/mysql",
-            "extra_env": [
-                {"name": "MARIADB_USER", "value": app_user},
-                {"name": "MARIADB_ROOT_PASSWORD", "value": generate_db_password(16)}
-            ],
-            "connection_info": {
-                "host": f"{app_name}-db-svc",
-                "user": app_user,
-                "port": 3306,
-                "type": "mariadb",
-                "db_name": db_name,
-                "password": db_password
-            }
-        }
-    elif db_type in ["postgresql", "postgres"]:
-        return {
-            "image": "postgres:15",
-            "port": 5432,
-            "db_name_env": "POSTGRES_DB",
-            "db_pass_env": "POSTGRES_PASSWORD",
-            "db_user": app_user,
-            "mount_path": "/var/lib/postgresql/data",
-            "extra_env": [{"name": "POSTGRES_USER", "value": app_user}],
-            "connection_info": {
-                "host": f"{app_name}-db-svc",
-                "user": app_user,
-                "port": 5432,
-                "type": "postgresql",
-                "db_name": db_name,
-                "password": db_password
-            }
-        }
-    elif db_type == "mongodb":
-        return {
-            "image": "mongo:6.0",
-            "port": 27017,
-            "db_name_env": "MONGO_INITDB_DATABASE",
-            "db_pass_env": "MONGO_INITDB_ROOT_PASSWORD",
-            "db_user": "root",
-            "mount_path": "/data/db",
-            "extra_env": [{"name": "MONGO_INITDB_ROOT_USERNAME", "value": "root"}],
-            "connection_info": {
-                "host": f"{app_name}-db-svc",
-                "user": "root",
-                "port": 27017,
-                "type": "mongodb",
-                "db_name": db_name,
-                "password": db_password
-            }
-        }
-    else:
-        raise ValueError(f"Loại Database '{db_type}' chưa được hỗ trợ.")
-
-def generate_cms_db_manifest(app_name: str, db_password: str, workspace_dir: str, strategy: dict):
-    db_name = f"{app_name}_db".replace("-", "_")
-    env_vars_yaml = f"""
-        - name: {strategy['db_pass_env']}
-          value: "{db_password}"
-        - name: {strategy['db_name_env']}
-          value: "{db_name}"
+def setup_wordpress_config(workspace_dir: str, app_name: str, db_info: dict) -> bool:
     """
-    if "extra_env" in strategy:
-        for env in strategy["extra_env"]:
-            env_vars_yaml += f"""
-        - name: {env['name']}
-          value: "{env['value']}"
-"""
-
-    yaml_content = f"""apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: {app_name}-db-pvc
-  namespace: {K8S_NAMESPACE}
-  labels:
-    app: {app_name}-db
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi
----
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: {app_name}-db
-  namespace: {K8S_NAMESPACE}
-  labels:
-    app: {app_name}-db
-spec:
-  serviceName: "{app_name}-db-svc"
-  replicas: 1
-  selector:
-    matchLabels:
-      app: {app_name}-db
-  template:
-    metadata:
-      labels:
-        app: {app_name}-db
-    spec:
-      containers:
-      - name: db-container
-        image: {strategy['image']}
-        env:{env_vars_yaml}
-        ports:
-        - containerPort: {strategy['port']}
-        volumeMounts:
-        - name: db-storage
-          mountPath: {strategy['mount_path']}
-      volumes:
-      - name: db-storage
-        persistentVolumeClaim:
-          claimName: {app_name}-db-pvc
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: {app_name}-db-svc
-  namespace: {K8S_NAMESPACE}
-  labels:
-    app: {app_name}-db
-spec:
-  selector:
-    app: {app_name}-db
-  ports:
-    - protocol: TCP
-      port: {strategy['port']}
-      targetPort: {strategy['port']}
-"""
-    k8s_dir = f"{workspace_dir}/k8s"
-    os.makedirs(k8s_dir, exist_ok=True)
-    with open(f"{k8s_dir}/db.yaml", "w", encoding="utf-8") as f:
-        f.write(yaml_content)
-
-# --- CẤU HÌNH TỰ ĐỘNG CHO TỪNG CMS & OPEN-SOURCE ---
-
-def setup_wordpress_turnkey(workspace_dir: str, app_name: str, app_domain: str, db_info: dict) -> bool:
-    """
-    Tự động chuẩn bị file wp-config.php, cấu hình Database trắng,
-    sinh 8 Secret Salt keys, xử lý SSL Traefik reverse proxy và cấu hình Nixpacks PHP 8.2.
+    Tự động cấu hình toàn diện cho WordPress:
+    - Điền thông tin kết nối Database vào wp-config.php
+    - Sinh 8 khóa bảo mật Salt ngẫu nhiên
+    - Xử lý SSL Traefik reverse proxy (chống vòng lặp chuyển hướng HTTPS)
+    - Cấu hình FS_METHOD direct (cài plugin/theme trực tiếp không cần FTP)
+    - Tạo cấu hình Nixpacks chuẩn PHP 8.2 + mysqli
+    Trả về True nếu phát hiện và cấu hình WordPress thành công.
     """
     wp_config_path = os.path.join(workspace_dir, "wp-config.php")
     wp_sample_path = os.path.join(workspace_dir, "wp-config-sample.php")
@@ -272,7 +75,8 @@ def setup_wordpress_turnkey(workspace_dir: str, app_name: str, app_domain: str, 
     if not target_wp:
         return False
 
-    write_log(app_name, "   -> [WordPress Turnkey] Phát hiện CMS WordPress! Bắt đầu tiêm cấu hình tự động...")
+    write_log(app_name, "   -> [WordPress Setup] Phát hiện mã nguồn WordPress! Đang tự động cấu hình Database...")
+
     try:
         with open(target_wp, "r", encoding="utf-8", errors="ignore") as f:
             wp_text = f.read()
@@ -282,13 +86,13 @@ def setup_wordpress_turnkey(workspace_dir: str, app_name: str, app_domain: str, 
         db_pass = db_info.get("password", "")
         db_host = f"{db_info.get('host', f'{app_name}-db-svc')}:{db_info.get('port', 3306)}"
 
-        # Ghi đè thông số kết nối Database
+        # 1. Điền thông số Database
         wp_text = re.sub(r"define\s*\(\s*['\"]DB_NAME['\"]\s*,\s*['\"][^'\"]*['\"]\s*\);", f"define( 'DB_NAME', '{db_name}' );", wp_text)
         wp_text = re.sub(r"define\s*\(\s*['\"]DB_USER['\"]\s*,\s*['\"][^'\"]*['\"]\s*\);", f"define( 'DB_USER', '{db_user}' );", wp_text)
         wp_text = re.sub(r"define\s*\(\s*['\"]DB_PASSWORD['\"]\s*,\s*['\"][^'\"]*['\"]\s*\);", f"define( 'DB_PASSWORD', '{db_pass}' );", wp_text)
         wp_text = re.sub(r"define\s*\(\s*['\"]DB_HOST['\"]\s*,\s*['\"][^'\"]*['\"]\s*\);", f"define( 'DB_HOST', '{db_host}' );", wp_text)
 
-        # Tự sinh 8 khóa bảo mật Salt ngẫu nhiên
+        # 2. Sinh 8 khóa bảo mật Salt ngẫu nhiên
         salts = [
             'AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'NONCE_KEY',
             'AUTH_SALT', 'SECURE_AUTH_SALT', 'LOGGED_IN_SALT', 'NONCE_SALT'
@@ -300,18 +104,18 @@ def setup_wordpress_turnkey(workspace_dir: str, app_name: str, app_domain: str, 
                 wp_text
             )
 
-        # Cấu hình SSL Traefik reverse proxy và FS_METHOD direct
-        extra_wp_config = f"""
+        # 3. Cấu hình SSL Traefik reverse proxy + FS_METHOD direct
+        extra_wp_config = """
 // --- VIBE HOSTING AUTO CONFIGURATION ---
-if (!defined('FS_METHOD')) {{
+if (!defined('FS_METHOD')) {
     define( 'FS_METHOD', 'direct' );
-}}
-if (!defined('WP_MEMORY_LIMIT')) {{
+}
+if (!defined('WP_MEMORY_LIMIT')) {
     define( 'WP_MEMORY_LIMIT', '256M' );
-}}
-if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {{
+}
+if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
     $_SERVER['HTTPS'] = 'on';
-}}
+}
 // ---------------------------------------
 """
         if "/* That's all, stop editing!" in wp_text:
@@ -322,7 +126,7 @@ if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROT
         with open(wp_config_path, "w", encoding="utf-8") as f:
             f.write(wp_text)
 
-        # Cấu hình nixpacks.toml chuẩn cho WordPress PHP 8.2 & extensions
+        # 4. Tạo nixpacks.toml chuẩn PHP 8.2 + mysqli
         nixpacks_php_cfg = """[phases.setup]
 nixPkgs = ["php82", "php82Extensions.mysqli", "php82Extensions.curl", "php82Extensions.gd", "php82Extensions.mbstring", "php82Extensions.xml", "php82Extensions.zip", "php82Extensions.openssl"]
 
@@ -332,14 +136,18 @@ cmd = "php -S 0.0.0.0:80"
         with open(os.path.join(workspace_dir, "nixpacks.toml"), "w", encoding="utf-8") as nf:
             nf.write(nixpacks_php_cfg)
 
-        write_log(app_name, "   -> [WordPress Turnkey] Đã cấu hình wp-config.php (Secret Salts, SSL Traefik, FS_METHOD direct) và Nixpacks PHP 8.2 thành công!")
+        write_log(app_name, "   -> [WordPress Setup] Đã cấu hình wp-config.php (Database, Secret Salts, SSL Traefik, FS_METHOD direct) và Nixpacks PHP 8.2 thành công!")
         return True
+
     except Exception as e:
-        write_log(app_name, f"   -> [WordPress Turnkey Warning] {e}")
+        write_log(app_name, f"   -> [WordPress Setup Warning] {e}")
         return False
 
+
 def setup_opensource_env(workspace_dir: str, app_name: str, app_domain: str, db_info: dict) -> bool:
-    """Tự động cấu hình file .env từ .env.example cho các dự án Open-Source chuẩn (Laravel, Node, Django,...)"""
+    """
+    Tự động chuẩn bị và tiêm cấu hình Database vào file .env cho các dự án Open-Source chuẩn (Laravel, Node, Django,...).
+    """
     env_file_path = os.path.join(workspace_dir, ".env")
     env_example_path = os.path.join(workspace_dir, ".env.example")
 
@@ -386,203 +194,10 @@ def setup_opensource_env(workspace_dir: str, app_name: str, app_domain: str, db_
             write_log(app_name, f"   -> [Auto-Config .env Warning] {e}")
     return False
 
-def analyze_and_configure_cms(workspace_dir: str, app_name: str, app_domain: str, db_info: dict, ai_provider: str = "agy") -> int:
-    """
-    Quy trình tích hợp cấu hình Database vào mã nguồn CMS / Open Source:
-    1. WordPress Turnkey (wp-config.php) -> Nhanh, chuẩn 100% không cần AI
-    2. Open-Source .env Injection -> Nhanh, chuẩn cho Laravel / Node.js
-    3. AI Engine (AGY / Hermes) -> Dành cho mã nguồn tùy biến không theo chuẩn chung
-    """
-    write_log(app_name, f"[AI ({ai_provider.upper()})] Đang phân tích mã nguồn và cấu hình kết nối DB...")
 
-    # 1. Thử WordPress
-    if setup_wordpress_turnkey(workspace_dir, app_name, app_domain, db_info):
-        return 80
-
-    # 2. Thử .env thông thường
-    setup_opensource_env(workspace_dir, app_name, app_domain, db_info)
-
-    # 3. Quét nhanh ngữ cảnh file cấu hình chính
-    code_context = ""
-    target_exts = [".json", ".env", ".yaml", ".yml", ".py", ".php", ".js", ".ts"]
-    for root, dirs, files in os.walk(workspace_dir):
-        # Bỏ qua thư mục rác / thư viện nặng
-        dirs[:] = [d for d in dirs if d not in [".git", "node_modules", "vendor", "wp-includes", "wp-admin", "target", ".cache", "dist", "build"]]
-        for f in files:
-            if any(f.endswith(ext) for ext in target_exts) and f not in ["package-lock.json", "yarn.lock"]:
-                fpath = os.path.join(root, f)
-                rel_path = os.path.relpath(fpath, workspace_dir)
-                try:
-                    with open(fpath, "r", encoding="utf-8", errors="ignore") as cf:
-                        content = cf.read()
-                        if len(content) < 4000:
-                            code_context += f"\n--- FILE: {rel_path} ---\n{content}\n"
-                except Exception:
-                    pass
-        if len(code_context) > 25000:
-            break
-
-    # Nếu mã nguồn đã rõ ràng (Node.js/Python/PHP) ta phát hiện cổng trước
-    detected_port = detect_cms_app_port(workspace_dir)
-
-    # Nếu có file mã nguồn tùy biến cần AI nối DB
-    if code_context.strip():
-        db_type_val = db_info.get("type", "mysql").lower()
-        prompt = f"""
-Bạn là Chuyên gia DevOps cao cấp. Hãy cấu hình ứng dụng Open-Source kết nối vào Database trắng nội bộ K3s.
-THÔNG TIN DATABASE NỘI BỘ:
-- Loại DB: {db_type_val.upper()}
-- Host: {db_info['host']}
-- Port: {db_info['port']}
-- Tên DB: {db_info['db_name']}
-- User: {db_info['user']}
-- Password: {db_info['password']}
-- Domain Ingress: {app_domain}
-
-MÃ NGUỒN HIỆN TẠI:
-{code_context[:20000]}
-
-YÊU CẦU:
-Trả về DUY NHẤT một JSON hợp lệ:
-{{
-  "files_to_update": [
-    {{"path": "đường_dẫn_file", "content": "nội_dung_đầy_đủ"}}
-  ],
-  "target_port": {detected_port}
-}}
-"""
-        try:
-            res_ai = call_ai_json(prompt, app_name=app_name, cwd=workspace_dir, ai_provider=ai_provider)
-
-            if isinstance(res_ai, dict):
-                for f_item in res_ai.get("files_to_update", []):
-                    rel_p = f_item.get("path")
-                    f_cnt = f_item.get("content")
-                    if rel_p and f_cnt:
-                        abs_p = os.path.join(workspace_dir, rel_p)
-                        os.makedirs(os.path.dirname(abs_p), exist_ok=True)
-                        with open(abs_p, "w", encoding="utf-8") as out_f:
-                            out_f.write(f_cnt)
-                        write_log(app_name, f"   -> [AI Config] Đã cập nhật file cấu hình: {rel_p}")
-                if res_ai.get("target_port"):
-                    detected_port = int(res_ai["target_port"])
-        except Exception as e:
-            write_log(app_name, f"   -> [AI Config Note] AI bỏ qua bước tùy biến thêm: {e}")
-
-    return detected_port
-
-# --- TEMPLATES DEPLOYMENT, SERVICE & INGRESS KUBERNETES ---
-
-def generate_cms_deployment(app_name: str, image_tag: str, target_port: int, db_info: dict) -> str:
-    db_type = db_info.get("type", "").lower()
-    db_host = db_info.get("host", "")
-    db_port = str(db_info.get("port", 3306))
-    db_user = db_info.get("user", "")
-    db_pass = db_info.get("password", "")
-    db_name = db_info.get("db_name", "")
-
-    env_lines = [
-        f'        - name: PORT\n          value: "{target_port}"',
-        f'        - name: SERVER_PORT\n          value: "{target_port}"',
-        f'        - name: DB_HOST\n          value: "{db_host}"',
-        f'        - name: DB_PORT\n          value: "{db_port}"',
-        f'        - name: DB_USER\n          value: "{db_user}"',
-        f'        - name: DB_PASS\n          value: "{db_pass}"',
-        f'        - name: DB_PASSWORD\n          value: "{db_pass}"',
-        f'        - name: DB_NAME\n          value: "{db_name}"',
-        f'        - name: DATABASE_URL\n          value: "{build_database_url(db_info)}"',
-    ]
-
-    env_yaml = "\n".join(env_lines)
-
-    return f"""apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {app_name}
-  namespace: {K8S_NAMESPACE}
-  labels:
-    app: {app_name}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: {app_name}
-  template:
-    metadata:
-      labels:
-        app: {app_name}
-    spec:
-      imagePullSecrets:
-      - name: regcred
-      containers:
-      - name: {app_name}
-        image: {image_tag}
-        imagePullPolicy: Always
-        ports:
-        - containerPort: {target_port}
-        env:
-{env_yaml}
-"""
-
-def generate_cms_service(app_name: str, target_port: int) -> str:
-    return f"""apiVersion: v1
-kind: Service
-metadata:
-  name: {app_name}-svc
-  namespace: {K8S_NAMESPACE}
-  labels:
-    app: {app_name}
-spec:
-  selector:
-    app: {app_name}
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: {target_port}
-"""
-
-def generate_cms_ingress(app_name: str, app_domain: str) -> str:
-    return f"""apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: {app_name}-ingress
-  namespace: {K8S_NAMESPACE}
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-spec:
-  tls:
-  - hosts:
-    - {app_domain}
-    secretName: {app_name}-tls
-  rules:
-  - host: {app_domain}
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: {app_name}-svc
-            port:
-              number: 80
-"""
-
-# --- HÀM DỌN DẸP SẠCH SẼ TÀI NGUYÊN CMS & DATABASE ---
-
-def delete_cms_db_resources(app_name: str):
-    try:
-        write_log(app_name, f"[Cleanup] Đang dọn dẹp cụm CMS {app_name} (Database, Deployment, Ingress)...")
-        subprocess.run(["kubectl", "delete", "statefulset", f"{app_name}-db", "-n", K8S_NAMESPACE, "--ignore-not-found=true"], check=False)
-        subprocess.run(["kubectl", "delete", "service", f"{app_name}-db-svc", "-n", K8S_NAMESPACE, "--ignore-not-found=true"], check=False)
-        subprocess.run(["kubectl", "delete", "pvc", f"{app_name}-db-pvc", "-n", K8S_NAMESPACE, "--ignore-not-found=true"], check=False)
-        subprocess.run(["kubectl", "delete", "pvc", f"db-storage-{app_name}-db-0", "-n", K8S_NAMESPACE, "--ignore-not-found=true"], check=False)
-        subprocess.run(["kubectl", "delete", "deployment,service,ingress", app_name, f"{app_name}-svc", f"{app_name}-ingress", "-n", K8S_NAMESPACE, "--ignore-not-found=true"], check=False)
-        subprocess.run(["kubectl", "delete", "all,pvc", "-l", f"app={app_name}-db", "-n", K8S_NAMESPACE, "--ignore-not-found=true"], check=False)
-        write_log(app_name, f"[Cleanup] Đã dọn dẹp hoàn tất toàn bộ tài nguyên CMS của {app_name}!")
-    except Exception as e:
-        write_log(app_name, f"[CẢNH BÁO Cleanup] Lỗi: {e}")
-
-# --- QUY TRÌNH CHÍNH: TRIỂN KHAI CMS & OPEN-SOURCE (CLEAN DB) ---
+# ============================================================
+# HÀM CHÍNH: DEPLOY CMS / OPEN-SOURCE VỚI CLEAN DATABASE
+# ============================================================
 
 def deploy_cms_app(
     repo_url: str,
@@ -593,104 +208,109 @@ def deploy_cms_app(
     cms_type: str = "wordpress"
 ):
     """
-    Quy trình triển khai trọn gói CMS (WordPress mặc định) hoặc bất kỳ Open-Source repo nào
-    với Clean Database (Database Trắng) tự động, không yêu cầu người dùng nạp file backup SQL.
+    Quy trình triển khai CMS / Open-Source:
+    1. Kéo mã nguồn từ link GitHub
+    2. Tự khởi tạo Pod Database sạch (Clean DB) trên K3s
+    3. Tự động phân tích mã nguồn và kết nối Database vào ứng dụng
+    4. Build image bằng Nixpacks và khởi chạy trên K8s
     """
-    write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI CMS / OPEN-SOURCE] {app_name} ({db_type.upper()}) (AI: {ai_provider.upper()}) ===")
+    target_repo = (repo_url or "").strip()
+    if not target_repo or target_repo.lower() in ["wordpress", "wp", "default"]:
+        final_repo_url = "https://github.com/WordPress/WordPress.git"
+    else:
+        final_repo_url = target_repo
+
+    write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI CMS / MÃ NGUỒN MỞ] {app_name} ({db_type.upper()}) (AI: {ai_provider.upper()}) ===")
     WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
 
     try:
-        # 0. Chuẩn bị mã nguồn
-        target_repo = (repo_url or "").strip()
-        if not target_repo or target_repo.lower() in ["wordpress", "wp", "default"] or cms_type == "wordpress":
-            final_repo_url = "https://github.com/WordPress/WordPress.git"
-            write_log(app_name, "[0] Nhận diện CMS WordPress Mặc định -> Kéo mã nguồn chính thức từ https://github.com/WordPress/WordPress.git...")
-        else:
-            final_repo_url = target_repo
-            write_log(app_name, f"[0] Đang kéo mã nguồn từ GitHub: {final_repo_url}...")
-
+        # [0] Kéo mã nguồn từ GitHub
+        write_log(app_name, f"[0] Đang kéo mã nguồn từ GitHub: {final_repo_url}...")
         if os.path.exists(WORKSPACE_DIR):
             run_cmd(["rm", "-rf", WORKSPACE_DIR], app_name)
-        # Sử dụng shallow clone --depth 1 để tải nhanh tức thì
         run_cmd(["git", "clone", "--depth", "1", final_repo_url, WORKSPACE_DIR], app_name)
 
-        # 1. Chuẩn bị Database trắng nội bộ
+        # [1] Tự động tạo Pod Database nội bộ trên K3s
         write_log(app_name, f"\n[1] Đang chuẩn bị Database nội bộ ({db_type.upper()})...")
-        db_password = generate_db_password(14)
-        db_strategy = get_db_strategy(db_type, app_name, db_password)
-        generate_cms_db_manifest(app_name, db_password, WORKSPACE_DIR, db_strategy)
+        pass_env_map = {"mysql": "MYSQL_PASSWORD", "mariadb": "MARIADB_PASSWORD", "postgresql": "POSTGRES_PASSWORD", "mongodb": "MONGO_INITDB_ROOT_PASSWORD"}
+        db_password = ""
+        target_env = pass_env_map.get(db_type.lower(), "MYSQL_PASSWORD")
+        try:
+            check_pass_cmd = f"kubectl get statefulset {app_name}-db -n {K8S_NAMESPACE} -o jsonpath='{{.spec.template.spec.containers[0].env[?(@.name==\"{target_env}\")].value}}'"
+            existing_pass = subprocess.check_output(check_pass_cmd, shell=True, text=True).strip()
+            if existing_pass:
+                db_password = existing_pass
+        except Exception:
+            pass
+        if not db_password:
+            db_password = generate_db_password()
 
-        # 2. Triển khai Database lên cụm K8s
-        write_log(app_name, "[2] Đang triển khai StatefulSet Database...")
-        run_cmd(["kubectl", "apply", "-f", f"{WORKSPACE_DIR}/k8s/db.yaml"], app_name)
+        strategy = get_db_strategy(db_type, app_name, db_password, WORKSPACE_DIR)
+        generate_db_manifest(app_name, db_password, WORKSPACE_DIR, strategy)
 
-        # 3. Đợi Pod Database khởi động và kiểm tra kết nối
+        # [2] Triển khai StatefulSet Database lên K3s
+        write_log(app_name, f"[2] Đang triển khai Pod Database ({db_type.upper()}) lên K3s...")
+        run_cmd(["kubectl", "apply", "-f", "k8s/db.yaml"], app_name, cwd=WORKSPACE_DIR)
+
+        # [3] Đợi Pod Database sẵn sàng
         write_log(app_name, "[3] Đang chờ Pod Database khởi động...")
-        db_pod_name = f"{app_name}-db-0"
-        db_ready = False
-        for attempt in range(30):
+        db_pod_name = ""
+        while True:
             try:
-                chk = subprocess.run(
-                    f"kubectl get pod {db_pod_name} -n {K8S_NAMESPACE} -o jsonpath='{{.status.phase}}'",
-                    shell=True, capture_output=True, text=True, timeout=5
-                )
-                if chk.stdout.strip() == "Running":
-                    db_ready = True
+                db_pod_name = subprocess.check_output(f"kubectl get pods -n {K8S_NAMESPACE} -l app={app_name}-db -o jsonpath='{{.items[0].metadata.name}}'", shell=True, text=True).strip()
+                status = subprocess.check_output(f"kubectl get pod {db_pod_name} -n {K8S_NAMESPACE} -o jsonpath='{{.status.phase}}'", shell=True, text=True).strip()
+                if status == "Running":
+                    time.sleep(12)
                     break
             except Exception:
                 pass
-            time.sleep(3)
+            time.sleep(4)
+        write_log(app_name, f"✅ Database đã sẵn sàng: {db_pod_name}")
 
-        if not db_ready:
-            write_log(app_name, "⚠️ [Cảnh báo] Database chưa báo Running sau 90s, tiếp tục tiến trình...")
+        db_name = f"{app_name}_db".replace("-", "_")
+        write_log(app_name, f"ℹ️ [DB Status] Chế độ Database Trắng (Clean DB) - Đã khởi tạo {db_type.upper()} sạch. Người dùng có thể thiết lập ứng dụng trực tiếp.")
+
+        db_info = strategy["connection_info"]
+        db_info["password"] = db_password
+        db_info["db_name"] = db_name
+
+        # [4] Phân tích mã nguồn và kết nối Database vào ứng dụng
+        write_log(app_name, "\n[4] Đang phân tích mã nguồn và cấu hình kết nối Database...")
+        is_wp = setup_wordpress_config(WORKSPACE_DIR, app_name, db_info)
+        if is_wp:
+            detected_port = 80
+            write_log(app_name, "   -> [WordPress] Hoàn tất kết nối Database vào wp-config.php (Cổng hoạt động: 80).")
         else:
-            write_log(app_name, f"✅ Database đã sẵn sàng: {db_pod_name}")
+            setup_opensource_env(WORKSPACE_DIR, app_name, app_domain, db_info)
+            detected_port = analyze_and_fix_backend(WORKSPACE_DIR, app_name, app_domain, db_info, ai_provider=ai_provider)
 
-        # 4. Ghi nhận trạng thái Clean DB
-        write_log(app_name, f"ℹ️ [DB Status] Chế độ Database Trắng (Clean DB) - Đã khởi tạo {db_type.upper()} sạch. Không có file backup, bỏ qua bước nạp dữ liệu.")
+        auto_patch_nodejs_esm_conflicts(WORKSPACE_DIR, app_name)
 
-        # 5. Cấu hình Database vào mã nguồn
-        write_log(app_name, f"\n[4] Đang cấu hình kết nối Database vào mã nguồn ({cms_type.upper()})...")
-        db_info = db_strategy["connection_info"]
-        target_port = analyze_and_configure_cms(WORKSPACE_DIR, app_name, app_domain, db_info, ai_provider)
-        write_log(app_name, f"   -> Cổng dịch vụ được xác định: {target_port}")
-
-        # 6. Đóng gói Docker Image bằng Nixpacks
+        # [5] Build Docker Image bằng Nixpacks
         IMAGE_TAG = f"{DOCKER_USER}/{app_name}:latest"
-        write_log(app_name, f"\n[5] Đang build Docker Image ({IMAGE_TAG}) bằng Nixpacks...")
-        run_cmd(["nixpacks", "build", WORKSPACE_DIR, "--name", IMAGE_TAG], app_name)
+        k8s_dir = f"{WORKSPACE_DIR}/k8s"
+        with open(f"{k8s_dir}/deployment.yaml", "w", encoding="utf-8") as f:
+            f.write(generate_standard_deployment(app_name, IMAGE_TAG, detected_port, db_info))
+        with open(f"{k8s_dir}/service.yaml", "w", encoding="utf-8") as f:
+            f.write(generate_standard_service(app_name, detected_port))
+        with open(f"{k8s_dir}/ingress.yaml", "w", encoding="utf-8") as f:
+            f.write(generate_standard_ingress(app_name, app_domain))
 
-        write_log(app_name, "\n[6] Đang đẩy Image lên Docker Hub...")
+        write_log(app_name, f"\n[5] Đang Build Docker Image ({IMAGE_TAG})...")
+        run_cmd(["nixpacks", "build", ".", "--name", IMAGE_TAG], app_name, cwd=WORKSPACE_DIR)
+
+        write_log(app_name, "[6] Đang đẩy Image lên Docker Hub...")
         run_cmd(["docker", "push", IMAGE_TAG], app_name)
 
-        # 7. Khởi tạo K8s manifests cho ứng dụng
-        write_log(app_name, "\n[7] Đang tạo cấu hình Kubernetes Manifests...")
-        k8s_dir = f"{WORKSPACE_DIR}/k8s"
-        os.makedirs(k8s_dir, exist_ok=True)
+        # [6] Khởi chạy Pod Ứng dụng trên K3s
+        write_log(app_name, "[7] Đang khởi chạy Ứng dụng Web trên K3s...")
+        run_cmd(["kubectl", "apply", "-f", "k8s/deployment.yaml"], app_name, cwd=WORKSPACE_DIR)
+        run_cmd(["kubectl", "apply", "-f", "k8s/service.yaml"], app_name, cwd=WORKSPACE_DIR)
+        run_cmd(["kubectl", "apply", "-f", "k8s/ingress.yaml"], app_name, cwd=WORKSPACE_DIR)
 
-        deployment_yaml = generate_cms_deployment(app_name, IMAGE_TAG, target_port, db_info)
-        service_yaml = generate_cms_service(app_name, target_port)
-        ingress_yaml = generate_cms_ingress(app_name, app_domain)
-
-        with open(f"{k8s_dir}/deployment.yaml", "w", encoding="utf-8") as f:
-            f.write(deployment_yaml)
-        with open(f"{k8s_dir}/service.yaml", "w", encoding="utf-8") as f:
-            f.write(service_yaml)
-        with open(f"{k8s_dir}/ingress.yaml", "w", encoding="utf-8") as f:
-            f.write(ingress_yaml)
-
-        # 8. Triển khai ứng dụng lên Kubernetes
-        write_log(app_name, "\n[8] Đang triển khai ứng dụng lên Kubernetes...")
-        run_cmd(["kubectl", "apply", "-f", f"{k8s_dir}/deployment.yaml"], app_name)
-        run_cmd(["kubectl", "apply", "-f", f"{k8s_dir}/service.yaml"], app_name)
-        run_cmd(["kubectl", "apply", "-f", f"{k8s_dir}/ingress.yaml"], app_name)
-
-        write_log(app_name, f"\n[9] Khởi động lại deployment để áp dụng phiên bản mới...")
-        subprocess.run(["kubectl", "rollout", "restart", f"deployment/{app_name}", "-n", K8S_NAMESPACE], check=False)
-
-        write_log(app_name, f"\n=== HOÀN TẤT TRIỂN KHAI CMS / OPEN SOURCE THÀNH CÔNG ===")
-        write_log(app_name, f"🌐 Truy cập ứng dụng tại: https://{app_domain}")
-        write_log(app_name, f"🗄️ Database ({db_type.upper()}): {db_info['host']} (Database: {db_info['db_name']}, User: {db_info['user']})")
+        write_log(app_name, f"\n=== HOÀN TẤT TRIỂN KHAI CMS / OPEN-SOURCE ===")
+        write_log(app_name, f"🌐 Truy cập ứng dụng: https://{app_domain}")
+        write_log(app_name, f"🗄️ Database ({db_type.upper()}): {db_info['host']} (DB: {db_name}, User: {db_info['user']})")
         write_log(app_name, "DONE")
 
     except Exception as e:
