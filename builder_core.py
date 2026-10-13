@@ -135,16 +135,30 @@ def run_agy_json(prompt: str, app_name: str = "system", cwd: Optional[str] = Non
     Gọi agy và bóc tách dữ liệu JSON an toàn từ kết quả trả về.
     """
     raw_output = run_agy_prompt(prompt, app_name=app_name, cwd=cwd, timeout=timeout, preferred_model=preferred_model)
-    json_match = re.search(r'\{.*\}', raw_output, re.DOTALL)
-    if json_match:
-        clean_json = json_match.group(0)
+    # Loại bỏ mã màu ANSI từ terminal nếu CLI xuất ra
+    clean_text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', raw_output)
+
+    # Thử bóc tách khối ```json ... ```
+    md_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', clean_text, re.DOTALL)
+    if md_match:
+        clean_json = md_match.group(1).strip()
     else:
-        clean_json = raw_output.strip()
-        clean_json = re.sub(r"^`{1,3}(?:json)?\s*", "", clean_json, flags=re.IGNORECASE)
-        clean_json = re.sub(r"\s*`{1,3}$", "", clean_json)
+        # Tìm khối { ... } ngoài cùng
+        start_idx = clean_text.find('{')
+        end_idx = clean_text.rfind('}')
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            clean_json = clean_text[start_idx:end_idx+1].strip()
+        else:
+            clean_json = clean_text.strip()
+            clean_json = re.sub(r"^`{1,3}(?:json)?\s*", "", clean_json, flags=re.IGNORECASE)
+            clean_json = re.sub(r"\s*`{1,3}$", "", clean_json)
 
     clean_json = re.sub(r'\\(?![/"\\bfnrtu])', r'\\\\', clean_json)
-    return json.loads(clean_json)
+    try:
+        return json.loads(clean_json)
+    except Exception as e:
+        write_log(app_name, f"⚠️ [LỖI JSON AGY] Không thể parse JSON từ output của agy: {e}\nRaw Output: {raw_output[:300]}...")
+        raise e
 
 def run_hermes_prompt(prompt: str, app_name: str = "system", timeout: int = 90, preferred_model: Optional[str] = None) -> str:
     """

@@ -6,6 +6,7 @@ import string
 import json
 import re
 import requests
+from typing import Optional, Dict, Any, List
 
 try:
     import yaml

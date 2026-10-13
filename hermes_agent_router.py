@@ -442,7 +442,13 @@ Services:
             ai_provider=ai_provider
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI Engine ({ai_provider.upper()}) phân tích lỗi: {str(e)}")
+        write_log(context.get("app_name", "system"), f"⚠️ [AI DIAGNOSE WARNING] AI ({ai_provider.upper()}) phân tích thất bại: {e}")
+        return {
+            "diagnosis": f"AI Engine ({ai_provider.upper()}) phản hồi quá lâu hoặc gặp sự cố: {str(e)}",
+            "root_cause": "AI_TIMEOUT_OR_UNAVAILABLE",
+            "suggested_solution": "Hệ thống khuyến nghị thử lại hoặc chuyển đổi giữa AGY (Gemini Flash) và Hermes Agent. Bạn cũng có thể xem tab Pod Logs để đối chiếu trực tiếp.",
+            "actions": []
+        }
 
     if "actions" in parsed_data and isinstance(parsed_data["actions"], list):
         has_edit_file = False
@@ -932,4 +938,8 @@ Ingresses: {context.get('k8s_ingresses')}
         }
     except Exception as e:
         ai_engine = payload.ai_provider or "agy"
-        raise HTTPException(status_code=500, detail=f"Chat API ({ai_engine.upper()}) gặp lỗi: {str(e)}")
+        write_log(payload.app_name, f"⚠️ [AI CHAT WARNING] AI ({ai_engine.upper()}) gặp lỗi: {e}")
+        return {
+            "status": "warning",
+            "reply": f"⚠️ Trợ lý AI ({ai_engine.upper()}) phản hồi quá lâu hoặc gặp lỗi kết nối ({str(e)}). Vui lòng thử lại hoặc chuyển sang AI Provider khác."
+        }
