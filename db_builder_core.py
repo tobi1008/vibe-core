@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import time
 import random
@@ -78,7 +79,13 @@ def auto_patch_nodejs_esm_conflicts(workspace_dir: str, app_name: str):
 
 # --- HÀM TỰ ĐỘNG NHẬN DIỆN CỔNG CHÍNH XÁC THEO MÃ NGUỒN ---
 def detect_app_port(workspace_dir: str, ai_suggested_port: int = None) -> int:
-    # 1. Java Spring Boot -> Mặc định 8080
+    # 1. PHP (Laravel, Symfony, WordPress, v.v. - Nixpacks build Nginx/PHP-FPM lắng nghe cổng 80)
+    if os.path.exists(os.path.join(workspace_dir, "composer.json")) or \
+       os.path.exists(os.path.join(workspace_dir, "artisan")) or \
+       os.path.exists(os.path.join(workspace_dir, "index.php")):
+        return 80
+
+    # 2. Java Spring Boot -> Mặc định 8080
     if os.path.exists(os.path.join(workspace_dir, "pom.xml")) or os.path.exists(os.path.join(workspace_dir, "build.gradle")):
         for root, _, files in os.walk(workspace_dir):
             for f in files:
@@ -91,38 +98,6 @@ def detect_app_port(workspace_dir: str, ai_suggested_port: int = None) -> int:
                     except Exception:
                         pass
         return 8080
-
-    # 2. NodeJS / Frontend SPA (React, Vite, Vue) / Express / NestJS
-    pkg_path = os.path.join(workspace_dir, "package.json")
-    if os.path.exists(pkg_path):
-        try:
-            with open(pkg_path, "r", encoding="utf-8") as f:
-                pkg_data = json.load(f)
-            deps = {**pkg_data.get("dependencies", {}), **pkg_data.get("devDependencies", {})}
-            
-            for env_name in [".env", ".env.local", ".env.production"]:
-                env_file = os.path.join(workspace_dir, env_name)
-                if os.path.exists(env_file):
-                    with open(env_file, "r", encoding="utf-8") as ef:
-                        m = re.search(r'^\s*PORT\s*=\s*(\d+)', ef.read(), re.MULTILINE)
-                        if m:
-                            return int(m.group(1))
-
-            is_spa = any(k in deps for k in ["vite", "react", "vue", "@angular/core", "svelte"])
-            has_node_server = any(k in deps for k in ["express", "@nestjs/core", "koa", "fastify", "socket.io"])
-            
-            if is_spa and not has_node_server:
-                return 3000
-            elif has_node_server:
-                return 3000 if not ai_suggested_port else ai_suggested_port
-        except Exception:
-            pass
-
-    # 2. PHP (Laravel, Symfony, WordPress, v.v.)
-    if os.path.exists(os.path.join(workspace_dir, "composer.json")) or \
-       os.path.exists(os.path.join(workspace_dir, "artisan")) or \
-       os.path.exists(os.path.join(workspace_dir, "index.php")):
-        return 80
 
     # 3. NodeJS / Frontend SPA (React, Vite, Vue) / Express / NestJS
     pkg_path = os.path.join(workspace_dir, "package.json")
@@ -196,10 +171,79 @@ def merge_properties_content(orig_content: str, new_content: str) -> str:
             
     return "\n".join(updated_lines) + "\n"
 
+# --- HÀM TẠO DATABASE URL CHO MÃ NGUỒN MỞ ---
+def build_database_url(db_info: dict) -> str:
+    """Tạo chuỗi connection string DATABASE_URL cho mã nguồn mở"""
+    db_type = db_info.get("type", "mysql").lower()
+    user = db_info.get("user", "root")
+    password = db_info.get("password", "")
+    host = db_info.get("host", "localhost")
+    port = db_info.get("port", 3306)
+    db_name = db_info.get("db_name", "")
+
+    if db_type in ["mysql", "mariadb"]:
+        return f"mysql://{user}:{password}@{host}:{port}/{db_name}"
+    elif db_type in ["postgresql", "postgres"]:
+        return f"postgresql://{user}:{password}@{host}:{port}/{db_name}"
+    elif db_type == "mongodb":
+        return f"mongodb://{user}:{password}@{host}:{port}/{db_name}?authSource=admin"
+    return ""
+
+# --- HÀM TỰ ĐỘNG TIÊM CẤU HÌNH DATABASE VÀO FILE .ENV CHO REPO OPEN-SOURCE ---
+def setup_opensource_env(workspace_dir: str, app_name: str, app_domain: str, db_info: dict) -> bool:
+    """
+    Tự động chuẩn bị và tiêm cấu hình Database vào file .env cho các dự án Open-Source chuẩn (Laravel, Node, Django,...).
+    """
+    env_file_path = os.path.join(workspace_dir, ".env")
+    env_example_path = os.path.join(workspace_dir, ".env.example")
+
+    if not os.path.exists(env_file_path) and os.path.exists(env_example_path):
+        try:
+            shutil.copyfile(env_example_path, env_file_path)
+            write_log(app_name, "   -> [Auto-Config] Đã khởi tạo file .env từ .env.example")
+        except Exception:
+            pass
+
+    if os.path.exists(env_file_path):
+        try:
+            db_type_val = db_info.get("type", "mysql").lower()
+            db_conn = "pgsql" if db_type_val in ["postgresql", "postgres"] else ("mongodb" if db_type_val == "mongodb" else "mysql")
+            db_url_val = build_database_url(db_info)
+
+            with open(env_file_path, "r", encoding="utf-8", errors="ignore") as ef:
+                env_lines = ef.read()
+
+            replacements = {
+                "DB_CONNECTION": db_conn,
+                "DB_HOST": db_info.get("host", ""),
+                "DB_PORT": str(db_info.get("port", 3306)),
+                "DB_DATABASE": db_info.get("db_name", ""),
+                "DB_USERNAME": db_info.get("user", ""),
+                "DB_PASSWORD": db_info.get("password", ""),
+                "DATABASE_URL": db_url_val,
+                "APP_URL": f"https://{app_domain}"
+            }
+
+            for k, v in replacements.items():
+                if not v:
+                    continue
+                if re.search(rf"^{k}\s*=", env_lines, re.MULTILINE):
+                    env_lines = re.sub(rf"^{k}\s*=.*", f"{k}={v}", env_lines, flags=re.MULTILINE)
+                else:
+                    env_lines += f"\n{k}={v}"
+
+            with open(env_file_path, "w", encoding="utf-8") as ef:
+                ef.write(env_lines)
+            write_log(app_name, f"   -> [Auto-Config .env] Đã cập nhật biến Database ({db_type_val.upper()}) vào file .env!")
+            return True
+        except Exception as e:
+            write_log(app_name, f"   -> [Auto-Config .env Warning] {e}")
+    return False
+
 # --- HÀM GỌI AI ĐIỀU PHỐI (AGY HOẶC HERMES) ---
-def call_hermes_ai(prompt_text: str, app_name: str, ai_provider: str = "agy", cwd: Optional[str] = None) -> dict:
+def call_hermes_ai(prompt_text: str, app_name: str, ai_provider: str = "agy", cwd: Optional[str] = None, timeout: int = 75) -> dict:
     from builder_core import call_ai_json
-    return call_ai_json(prompt_text, app_name=app_name, cwd=cwd, timeout=40, ai_provider=ai_provider)
+    return call_ai_json(prompt_text, app_name=app_name, cwd=cwd, timeout=timeout, ai_provider=ai_provider)
 
 # --- BỘ ĐỊNH TUYẾN DATABASE ---
 def get_db_strategy(db_type: str, app_name: str, db_password: str, workspace_dir: str):
@@ -611,15 +655,24 @@ def analyze_and_fix_backend(workspace_dir: str, app_name: str, app_domain: str, 
         except Exception as e:
             write_log(app_name, f"   -> [Auto-Patch WordPress Warning] {e}")
 
+    # Chuẩn bị file .env từ .env.example nếu chưa có
+    env_file = os.path.join(workspace_dir, ".env")
+    env_example = os.path.join(workspace_dir, ".env.example")
+    if not os.path.exists(env_file) and os.path.exists(env_example):
+        try:
+            shutil.copyfile(env_example, env_file)
+        except Exception:
+            pass
+
     code_context = ""
     for root, dirs, files in os.walk(workspace_dir):
         if any(ignored in root for ignored in [".git", "node_modules", "venv", "vendor", "target", "k8s"]):
             continue
         for file in files:
             if file in [
-                "pom.xml", "build.gradle", "package.json", "requirements.txt", "composer.json",
-                "application.properties", "application.yml", ".env", "database.php",
-                "wp-config.php", "wp-config-sample.php"
+                "pom.xml", "build.gradle", "package.json", "requirements.txt", "Pipfile", "composer.json",
+                "application.properties", "application.yml", "application.yaml", ".env", ".env.example",
+                "database.php", "wp-config.php", "wp-config-sample.php"
             ]:
                 try:
                     with open(os.path.join(root, file), "r", encoding="utf-8") as f:
@@ -644,7 +697,7 @@ Port: {db_info['port']}
 YÊU CẦU:
 1. Sửa file cấu hình kết nối DB (application.properties, application.yml, .env,...).
 2. TUYỆT ĐỐI GIỮ NGUYÊN BẢN toàn bộ cấu hình khác (MoMo, JWT, Mail,...). Chỉ sửa thông tin DB.
-3. Cho biết cổng port mà Backend này lắng nghe (Mặc định 8080 với Spring Boot, 3000/5000/8000 tùy ngôn ngữ).
+3. Cho biết cổng port mà Backend này lắng nghe (Mặc định 80 cho PHP, 8080 với Spring Boot, 3000/5000/8000 tùy ngôn ngữ).
 
 TRẢ VỀ DUY NHẤT ĐỐI TƯỢNG JSON (Không Markdown):
 {{
@@ -654,13 +707,18 @@ TRẢ VỀ DUY NHẤT ĐỐI TƯỢNG JSON (Không Markdown):
       "content": "toàn_bộ_nội_dung_sau_khi_sửa"
     }}
   ],
-  "app_port": 8080
+  "app_port": 80
 }}
 """
+    if code_context:
+        prompt += f"\n\n[MÃ NGUỒN VÀ CẤU HÌNH HIỆN TẠI CỦA DỰ ÁN]:{code_context}\n"
+
     ai_port = None
+    ai_success = False
     try:
-        ai_data = call_hermes_ai(prompt, app_name, ai_provider=ai_provider, cwd=workspace_dir)
-        if "files_to_update" in ai_data:
+        # Gọi AI với cwd=None để CLI agy khởi động tức thì, không bị nghẽn do quét thư mục dự án lớn
+        ai_data = call_hermes_ai(prompt, app_name, ai_provider=ai_provider, cwd=None, timeout=75)
+        if "files_to_update" in ai_data and ai_data["files_to_update"]:
             for file_data in ai_data["files_to_update"]:
                 raw_path = file_data['path'].lstrip('/')
                 file_path = os.path.join(workspace_dir, raw_path)
@@ -674,9 +732,24 @@ TRẢ VỀ DUY NHẤT ĐỐI TƯỢNG JSON (Không Markdown):
                         pass
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write(final_content)
+            ai_success = True
+            write_log(app_name, f"✅ [AI ({ai_provider.upper()})] Đã áp dụng thành công {len(ai_data['files_to_update'])} file cấu hình Database!")
         ai_port = ai_data.get("app_port")
     except Exception as e:
-        write_log(app_name, f"⚠️ AI patch gặp cảnh báo: {e}. Sử dụng cấu hình mặc định.")
+        write_log(app_name, f"⚠️ Tất cả các Model AI ({ai_provider.upper()}) đều không phản hồi: {e}.")
+
+    # --- FALLBACK (CÁCH 2): NẾU TẤT CẢ MODEL ĐỀU KHÔNG PHẢN HỒI THÌ TỰ ĐỘNG CẤU HÌNH ĐỂ NIXPACKS TỰ LÀM VIỆC ---
+    if not ai_success:
+        write_log(app_name, "ℹ️ [Fallback Cấu Hình] Chuyển sang cơ chế tự động tiêm cấu hình kết nối Database mặc định...")
+        wp_chk = os.path.exists(os.path.join(workspace_dir, "wp-config.php")) or os.path.exists(os.path.join(workspace_dir, "wp-config-sample.php"))
+        if wp_chk:
+            try:
+                from cms_builder_core import setup_wordpress_config
+                setup_wordpress_config(workspace_dir, app_name, db_info)
+            except Exception:
+                pass
+        else:
+            setup_opensource_env(workspace_dir, app_name, app_domain, db_info)
 
     detected_port = detect_app_port(workspace_dir, ai_port)
     write_log(app_name, f"   -> Cổng hoạt động của Backend: {detected_port}")

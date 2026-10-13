@@ -137,7 +137,7 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
 
     raise Exception(f"Tất cả các Model Antigravity đều không phản hồi: {last_err}")
 
-def run_agy_json(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 25, preferred_model: Optional[str] = None) -> dict:
+def run_agy_json(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 75, preferred_model: Optional[str] = None) -> dict:
     """
     Gọi agy và bóc tách dữ liệu JSON an toàn từ kết quả trả về.
     """

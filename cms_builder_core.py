@@ -276,17 +276,29 @@ def deploy_cms_app(
 
         # [4] Phân tích mã nguồn và kết nối Database vào ứng dụng
         write_log(app_name, "\n[4] Đang phân tích mã nguồn và cấu hình kết nối Database...")
-        is_wp = setup_wordpress_config(WORKSPACE_DIR, app_name, db_info)
-        if is_wp:
-            detected_port = 80
-            write_log(app_name, "   -> [WordPress] Hoàn tất kết nối Database vào wp-config.php (Cổng hoạt động: 80).")
-        else:
-            has_env = setup_opensource_env(WORKSPACE_DIR, app_name, app_domain, db_info)
-            if has_env:
-                detected_port = detect_app_port(WORKSPACE_DIR)
-                write_log(app_name, f"   -> [Open-Source .env] Đã kết nối Database ({db_type.upper()}) vào file .env thành công (Cổng dịch vụ: {detected_port})!")
-            else:
-                detected_port = analyze_and_fix_backend(WORKSPACE_DIR, app_name, app_domain, db_info, ai_provider=ai_provider)
+
+        # Nếu phát hiện WordPress thuần (có wp-config.php / wp-config-sample.php hoặc cms_type là wordpress)
+        is_wp_repo = os.path.exists(os.path.join(WORKSPACE_DIR, "wp-config.php")) or \
+                     os.path.exists(os.path.join(WORKSPACE_DIR, "wp-config-sample.php")) or \
+                     (cms_type and cms_type.lower() == "wordpress")
+
+        if is_wp_repo:
+            setup_wordpress_config(WORKSPACE_DIR, app_name, db_info)
+            write_log(app_name, "   -> [WordPress Setup] Đã khởi tạo cấu hình wp-config.php, Salt, SSL Traefik và Nixpacks PHP 8.2.")
+
+        # Chuẩn bị file môi trường cơ sở từ .env.example nếu chưa có .env (giúp AI có template cấu trúc biến)
+        env_file_path = os.path.join(WORKSPACE_DIR, ".env")
+        env_example_path = os.path.join(WORKSPACE_DIR, ".env.example")
+        if not os.path.exists(env_file_path) and os.path.exists(env_example_path):
+            try:
+                shutil.copyfile(env_example_path, env_file_path)
+                write_log(app_name, "   -> [Auto-Prep] Đã khởi tạo file .env từ .env.example để AI phân tích")
+            except Exception:
+                pass
+
+        # LUÔN LUÔN gọi AI Engine (AGY / Hermes) phân tích và cấu hình kết nối Database trước (Cách 2).
+        # Nếu không có model nào trả về (lỗi/timeout), analyze_and_fix_backend sẽ tự động fallback sang cấu hình mặc định để Nixpacks tự làm việc!
+        detected_port = analyze_and_fix_backend(WORKSPACE_DIR, app_name, app_domain, db_info, ai_provider=ai_provider)
 
         auto_patch_nodejs_esm_conflicts(WORKSPACE_DIR, app_name)
 
