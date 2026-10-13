@@ -13,6 +13,7 @@ from archive_builder_core import deploy_archive_app, deploy_archive_with_db, UPL
 from cicd_core import redeploy_app
 from db_builder_core import deploy_app_with_db, deploy_fullstack_app, delete_app_db_resources
 from monorepo_builder_core import deploy_monorepo_app
+from cms_builder_core import deploy_cms_app, delete_cms_db_resources
 import requests
 
 # Nạp router File Manager & Git an toàn
@@ -74,6 +75,51 @@ def get_ai_providers():
                 "badge": "Mô hình mã nguồn mở",
                 "description": "Bộ não suy luận Hermes nguyên bản gọi qua API Gateway nội bộ",
                 "models": HERMES_MODELS
+            }
+        ]
+    }
+
+@app.get("/api/open-source-templates")
+def get_open_source_templates():
+    """Trả về danh mục CMS và các ứng dụng mã nguồn mở hỗ trợ cài đặt Clean Database 1-click"""
+    return {
+        "status": "success",
+        "templates": [
+            {
+                "id": "wordpress",
+                "name": "WordPress (Official)",
+                "category": "CMS & Blog",
+                "default_repo": "https://github.com/WordPress/WordPress.git",
+                "default_db": "mysql",
+                "description": "Cài đặt WordPress nguyên bản từ GitHub chính thức, tự sinh 8 Salt keys, kích hoạt SSL Traefik reverse proxy và cấp phát MySQL trắng sạch.",
+                "badge": "1-Click Setup"
+            },
+            {
+                "id": "laravel",
+                "name": "Laravel Starter",
+                "category": "PHP Framework",
+                "default_repo": "https://github.com/laravel/laravel.git",
+                "default_db": "mysql",
+                "description": "Khởi tạo Laravel sạch, tự động sao chép .env.example và tiêm cấu hình DB_HOST, DB_DATABASE, DB_USERNAME, APP_URL.",
+                "badge": "Auto .env"
+            },
+            {
+                "id": "ghost",
+                "name": "Ghost CMS",
+                "category": "Publishing Platform",
+                "default_repo": "https://github.com/TryGhost/Ghost.git",
+                "default_db": "mysql",
+                "description": "Nền tảng blog xuất bản hiện đại viết bằng Node.js với MySQL.",
+                "badge": "Node.js"
+            },
+            {
+                "id": "custom",
+                "name": "Custom Open-Source Repo",
+                "category": "Tùy biến GitHub",
+                "default_repo": "",
+                "default_db": "mysql",
+                "description": "Triển khai bất kỳ repository GitHub mã nguồn mở nào với Database trắng hoàn toàn (MySQL, PostgreSQL, MongoDB, MariaDB) không cần file backup.",
+                "badge": "Clean DB"
             }
         ]
     }
@@ -148,6 +194,15 @@ class MonorepoDeployRequest(BaseModel):
     github_token: Optional[str] = None
     ai_provider: Optional[str] = "agy"
 
+class OpenSourceDeployRequest(BaseModel):
+    repo_url: Optional[str] = "wordpress"
+    app_name: str
+    app_domain: str
+    db_type: Optional[str] = "mysql"
+    github_token: Optional[str] = None
+    ai_provider: Optional[str] = "agy"
+    cms_type: Optional[str] = "wordpress"
+
 class RollbackRequest(BaseModel):
     component: Optional[str] = None  # "be", "fe", hoặc None (cho app single repo)
     revision: Optional[int] = 0      # Truyền 0 để tự động lùi về 1 phiên bản liền trước
@@ -170,6 +225,55 @@ async def trigger_deploy(req: DeployRequest, background_tasks: BackgroundTasks):
     })
     background_tasks.add_task(deploy_app, final_url, req.app_name, req.app_domain, ai_engine)
     return {"status": "success", "message": f"Hệ thống đang tiến hành Deploy {req.app_name} (AI: {ai_engine.upper()})."}
+
+@app.post("/api/deploy-open-source")
+async def trigger_deploy_open_source(req: OpenSourceDeployRequest, background_tasks: BackgroundTasks):
+    """
+    API Triển khai CMS (WordPress mặc định) hoặc bất kỳ repo mã nguồn mở nào với Clean Database (DB Trắng)
+    Không yêu cầu người dùng nạp file backup SQL.
+    """
+    target_repo = (req.repo_url or "").strip()
+    cms_type = (req.cms_type or "").strip().lower()
+
+    if not target_repo or target_repo.lower() in ["wordpress", "wp", "default"] or cms_type == "wordpress":
+        final_url = "https://github.com/WordPress/WordPress.git"
+        detected_cms = "wordpress"
+    else:
+        final_url = prepare_repo_url(target_repo, req.github_token)
+        detected_cms = cms_type or "custom"
+
+    owner = resolve_github_owner_from_token(req.github_token)
+    ai_engine = (req.ai_provider or "agy").lower().strip()
+    db_type = (req.db_type or "mysql").lower().strip()
+
+    with open(f"{LOG_DIR}/{req.app_name}.log", "w", encoding="utf-8") as f:
+        f.write(f"🚀 [INIT] Bắt đầu quy trình Deploy CMS/Open-Source ({detected_cms.upper()}): {req.app_name} ({req.app_domain}) - Clean DB ({db_type.upper()}) - AI: {ai_engine.upper()}...\n")
+
+    save_app_config(req.app_name, {
+        "auto_cicd": True,
+        "deploy_type": "open_source_clean_db",
+        "cms_type": detected_cms,
+        "repo_url": final_url,
+        "db_type": db_type,
+        "primary_github_owner": owner,
+        "has_token": bool(req.github_token),
+        "ai_provider": ai_engine
+    })
+
+    background_tasks.add_task(
+        deploy_cms_app,
+        final_url,
+        req.app_name,
+        req.app_domain,
+        db_type,
+        ai_engine,
+        detected_cms
+    )
+
+    return {
+        "status": "success",
+        "message": f"Hệ thống đang tiến hành triển khai CMS/Mã nguồn mở {req.app_name} với Clean Database ({db_type.upper()}) (AI: {ai_engine.upper()})."
+    }
 
 @app.post("/api/deploy-with-db")
 async def trigger_deploy_db(
@@ -424,6 +528,11 @@ def purge_app_workspace_and_configs(app_name: str):
     - Dọn dẹp apps_config.json và file log
     """
     # 1. Dọn dẹp tài nguyên Kubernetes và Database
+    try:
+        delete_cms_db_resources(app_name)
+    except Exception:
+        pass
+
     try:
         delete_app_db_resources(app_name)
     except Exception:
