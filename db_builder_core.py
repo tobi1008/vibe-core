@@ -168,9 +168,9 @@ def merge_properties_content(orig_content: str, new_content: str) -> str:
     return "\n".join(updated_lines) + "\n"
 
 # --- HÀM GỌI AI ĐIỀU PHỐI (AGY HOẶC HERMES) ---
-def call_hermes_ai(prompt_text: str, app_name: str, ai_provider: str = "agy") -> dict:
+def call_hermes_ai(prompt_text: str, app_name: str, ai_provider: str = "agy", cwd: Optional[str] = None) -> dict:
     from builder_core import call_ai_json
-    return call_ai_json(prompt_text, app_name=app_name, timeout=90, ai_provider=ai_provider)
+    return call_ai_json(prompt_text, app_name=app_name, cwd=cwd, timeout=40, ai_provider=ai_provider)
 
 # --- BỘ ĐỊNH TUYẾN DATABASE ---
 def get_db_strategy(db_type: str, app_name: str, db_password: str, workspace_dir: str):
@@ -562,12 +562,36 @@ def import_backup_to_db(db_type: str, db_pod_name: str, db_password: str, db_nam
 # --- AI VÁ MÃ NGUỒN CHO BACKEND ---
 def analyze_and_fix_backend(workspace_dir: str, app_name: str, app_domain: str, db_info: dict, ai_provider: str = "agy"):
     write_log(app_name, f"[AI ({ai_provider.upper()})] Đang phân tích mã nguồn Backend và cấu hình kết nối DB...")
+
+    # 0. Tự động nhận diện và vá cấu hình WordPress (wp-config.php / wp-config-sample.php)
+    wp_config_path = os.path.join(workspace_dir, "wp-config.php")
+    wp_sample_path = os.path.join(workspace_dir, "wp-config-sample.php")
+    target_wp = wp_config_path if os.path.exists(wp_config_path) else (wp_sample_path if os.path.exists(wp_sample_path) else None)
+    if target_wp:
+        try:
+            with open(target_wp, "r", encoding="utf-8", errors="ignore") as f:
+                wp_text = f.read()
+            host_str = f"{db_info['host']}:{db_info['port']}"
+            wp_text = re.sub(r"define\s*\(\s*['\"]DB_NAME['\"]\s*,\s*['\"][^'\"]*['\"]\s*\);", f"define( 'DB_NAME', '{db_info['db_name']}' );", wp_text)
+            wp_text = re.sub(r"define\s*\(\s*['\"]DB_USER['\"]\s*,\s*['\"][^'\"]*['\"]\s*\);", f"define( 'DB_USER', '{db_info['user']}' );", wp_text)
+            wp_text = re.sub(r"define\s*\(\s*['\"]DB_PASSWORD['\"]\s*,\s*['\"][^'\"]*['\"]\s*\);", f"define( 'DB_PASSWORD', '{db_info['password']}' );", wp_text)
+            wp_text = re.sub(r"define\s*\(\s*['\"]DB_HOST['\"]\s*,\s*['\"][^'\"]*['\"]\s*\);", f"define( 'DB_HOST', '{host_str}' );", wp_text)
+            with open(wp_config_path, "w", encoding="utf-8") as f:
+                f.write(wp_text)
+            write_log(app_name, "   -> [Auto-Patch WordPress] Đã tự động cấu hình Database vào wp-config.php thành công!")
+        except Exception as e:
+            write_log(app_name, f"   -> [Auto-Patch WordPress Warning] {e}")
+
     code_context = ""
     for root, dirs, files in os.walk(workspace_dir):
         if any(ignored in root for ignored in [".git", "node_modules", "venv", "vendor", "target", "k8s"]):
             continue
         for file in files:
-            if file in ["pom.xml", "build.gradle", "package.json", "requirements.txt", "composer.json", "application.properties", "application.yml", ".env", "database.php"]:
+            if file in [
+                "pom.xml", "build.gradle", "package.json", "requirements.txt", "composer.json",
+                "application.properties", "application.yml", ".env", "database.php",
+                "wp-config.php", "wp-config-sample.php"
+            ]:
                 try:
                     with open(os.path.join(root, file), "r", encoding="utf-8") as f:
                         code_context += f"\n\n--- File: {file} ---\n" + f.read()[:2000]
@@ -606,7 +630,7 @@ TRẢ VỀ DUY NHẤT ĐỐI TƯỢNG JSON (Không Markdown):
 """
     ai_port = None
     try:
-        ai_data = call_hermes_ai(prompt, app_name, ai_provider=ai_provider)
+        ai_data = call_hermes_ai(prompt, app_name, ai_provider=ai_provider, cwd=workspace_dir)
         if "files_to_update" in ai_data:
             for file_data in ai_data["files_to_update"]:
                 raw_path = file_data['path'].lstrip('/')

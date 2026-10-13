@@ -24,11 +24,9 @@ LOGS_DIR = "/opt/vibe-hosting/logs"
 # CẤU HÌNH AI ENGINES: ANTIGRAVITY (AGY) & HERMES
 # ==========================================
 AGY_MODELS = [
-    "gemini-3.7-flash-high",
-    "gemini-3.7-flash-medium",
-    "gemini-3.8-flash-low",
-    "gemini-3.8-flash-medium",
     "gemini-3.8-flash-high",
+    "gemini-3.8-flash-medium",
+    "gemini-3.8-flash-low",
 ]
 FALLBACK_MODELS = AGY_MODELS
 
@@ -113,7 +111,8 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                env=custom_env
+                env=custom_env,
+                stdin=subprocess.DEVNULL
             )
             if res.returncode == 0 and res.stdout.strip():
                 write_log(app_name, f"✅ [Antigravity AI] Model [{model_name}] phản hồi thành công!")
@@ -226,7 +225,7 @@ def call_ai_json(
         to = timeout or 90
         return run_hermes_json(prompt, app_name=app_name, timeout=to, preferred_model=preferred_model)
     else:
-        to = timeout or 30
+        to = timeout if (timeout and timeout <= 45) else 35
         return run_agy_json(prompt, app_name=app_name, cwd=cwd, timeout=to, preferred_model=preferred_model)
 
 def call_ai_prompt(
@@ -247,7 +246,7 @@ def call_ai_prompt(
         to = timeout or 90
         return run_hermes_prompt(prompt, app_name=app_name, timeout=to, preferred_model=preferred_model)
     else:
-        to = timeout or 30
+        to = timeout if (timeout and timeout <= 45) else 35
         return run_agy_prompt(prompt, app_name=app_name, cwd=cwd, timeout=to, preferred_model=preferred_model)
 
 def write_log(app_name, message):
