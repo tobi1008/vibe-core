@@ -59,8 +59,8 @@ if hermes_agent_router:
 
 @app.get("/api/ai-providers")
 def get_ai_providers():
-    """Trả về danh sách AI Engines được hỗ trợ trên hệ thống (Antigravity & Hermes)"""
-    from builder_core import AGY_MODELS, HERMES_MODELS
+    """Trả về danh sách AI Engines được hỗ trợ trên hệ thống (Antigravity, Claude Code & Hermes)"""
+    from builder_core import AGY_MODELS, HERMES_MODELS, CLAUDE_MODELS
     return {
         "status": "success",
         "default": "agy",
@@ -71,6 +71,13 @@ def get_ai_providers():
                 "badge": "Khuyên dùng - Nhanh (5-15s)",
                 "description": "Thực thi CLI trực tiếp trên VPS, tự động dự phòng 5 tầng Gemini Flash",
                 "models": AGY_MODELS
+            },
+            {
+                "id": "claude",
+                "name": "Claude Code (Anthropic Opus/Sonnet)",
+                "badge": "Trí tuệ cao cấp (Opus 5.5)",
+                "description": "Thực thi Claude Code CLI trực tiếp trên VPS với Opus 5.5, Sonnet 5.5, Haiku 5.5",
+                "models": CLAUDE_MODELS
             },
             {
                 "id": "hermes",

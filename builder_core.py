@@ -21,7 +21,7 @@ BASE_WORKSPACE = "/opt/vibe-hosting/workspaces"
 LOGS_DIR = "/opt/vibe-hosting/logs"
 
 # ==========================================
-# CẤU HÌNH AI ENGINES: ANTIGRAVITY (AGY) & HERMES
+# CẤU HÌNH AI ENGINES: ANTIGRAVITY (AGY), CLAUDE CODE & HERMES
 # ==========================================
 AGY_MODELS = [
     "gemini-3.7-flash-high",
@@ -31,6 +31,12 @@ AGY_MODELS = [
     "gemini-3.8-flash-high",
 ]
 FALLBACK_MODELS = AGY_MODELS
+
+CLAUDE_MODELS = [
+    "opus",
+    "sonnet",
+    "haiku",
+]
 
 HERMES_API_URL = os.getenv("HERMES_API_URL", "http://127.0.0.1:8645/v1/chat/completions")
 HEADERS = {
@@ -228,6 +234,146 @@ def run_hermes_json(prompt: str, app_name: str = "system", timeout: int = 90, pr
     clean_json = re.sub(r'\\(?![/"\\bfnrtu])', r'\\\\', clean_json)
     return json.loads(clean_json)
 
+def get_claude_bin() -> str:
+    """Tự động tìm kiếm đường dẫn tuyệt đối của binary claude trên máy chủ"""
+    env_bin = os.getenv("CLAUDE_BIN_PATH")
+    if env_bin and os.path.exists(env_bin):
+        return env_bin
+    
+    which_bin = shutil.which("claude")
+    if which_bin:
+        return which_bin
+
+    candidate_paths = [
+        "/usr/local/bin/claude",
+        "/usr/bin/claude",
+        "/root/.local/bin/claude",
+        "/root/.npm-global/bin/claude",
+        os.path.expanduser("~/.local/bin/claude"),
+        os.path.expanduser("~/.npm-global/bin/claude"),
+    ]
+    nvm_base = "/root/.nvm/versions/node"
+    if os.path.exists(nvm_base):
+        try:
+            for v in os.listdir(nvm_base):
+                p = os.path.join(nvm_base, v, "bin", "claude")
+                if os.path.exists(p) and os.access(p, os.X_OK):
+                    return p
+        except Exception:
+            pass
+
+    for p in candidate_paths:
+        if os.path.exists(p) and os.access(p, os.X_OK):
+            return p
+    return "claude"
+
+def run_claude_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 90, preferred_model: Optional[str] = None) -> str:
+    """
+    Thực thi prompt thông qua Claude Code CLI (claude -p) trực tiếp trên máy chủ.
+    Tự động fallback giữa các model Claude (Opus 5.5, Sonnet 5.5, Haiku 5.5).
+    """
+    models_to_try = [preferred_model] if preferred_model and preferred_model in CLAUDE_MODELS else []
+    for m in CLAUDE_MODELS:
+        if m not in models_to_try:
+            models_to_try.append(m)
+
+    claude_bin = get_claude_bin()
+    custom_env = os.environ.copy()
+    custom_env["HOME"] = custom_env.get("HOME", "/root")
+    extra_dirs = [
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/root/.local/bin",
+        "/root/.npm-global/bin",
+        os.path.expanduser("~/.local/bin"),
+        os.path.expanduser("~/.npm-global/bin"),
+    ]
+    nvm_base = "/root/.nvm/versions/node"
+    if os.path.exists(nvm_base):
+        try:
+            for v in os.listdir(nvm_base):
+                extra_dirs.append(os.path.join(nvm_base, v, "bin"))
+        except Exception:
+            pass
+    custom_env["PATH"] = ":".join(extra_dirs) + ":" + custom_env.get("PATH", "")
+
+    safe_prompt = prompt
+    if len(safe_prompt) > 70000:
+        safe_prompt = safe_prompt[:70000] + "\n\n... [Nội dung prompt đã được rút gọn để đảm bảo an toàn bộ nhớ tham số Linux]"
+
+    last_err = ""
+    for model_name in models_to_try:
+        try:
+            write_log(app_name, f"🤖 [Claude Code AI] Đang gửi yêu cầu tới Model [{model_name}]...")
+            cmd = [
+                claude_bin,
+                "-p", safe_prompt,
+                "--model", model_name
+            ]
+            res = subprocess.run(
+                cmd,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=custom_env,
+                stdin=subprocess.DEVNULL
+            )
+
+            if res.returncode == 0 and res.stdout.strip():
+                write_log(app_name, f"✅ [Claude Code AI] Model [{model_name}] phản hồi thành công!")
+                return res.stdout.strip()
+            else:
+                err_detail = res.stderr.strip() or f"Exit code {res.returncode}"
+                write_log(app_name, f"⚠️ Model [{model_name}] gặp sự cố ({err_detail}). Đang chuyển model dự phòng...")
+                last_err = err_detail
+        except subprocess.TimeoutExpired:
+            write_log(app_name, f"⚠️ Model [{model_name}] quá thời gian chờ ({timeout}s). Chuyển model dự phòng...")
+            last_err = f"Timeout {timeout}s"
+        except Exception as e:
+            write_log(app_name, f"⚠️ Lỗi thực thi claude ({claude_bin}) với [{model_name}]: {str(e)}")
+            last_err = str(e)
+
+    try:
+        write_log(app_name, "🤖 [Claude Code AI] Đang thử phương án gọi claude với cấu hình mặc định...")
+        cmd = [claude_bin, "-p", safe_prompt]
+        res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=custom_env, stdin=subprocess.DEVNULL)
+        if res.returncode == 0 and res.stdout.strip():
+            write_log(app_name, "✅ [Claude Code AI] Cấu hình mặc định phản hồi thành công!")
+            return res.stdout.strip()
+    except Exception:
+        pass
+
+    raise Exception(f"Tất cả các Model Claude Code đều không phản hồi: {last_err}")
+
+def run_claude_json(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 90, preferred_model: Optional[str] = None) -> dict:
+    """
+    Gọi Claude Code CLI và bóc tách dữ liệu JSON an toàn từ kết quả trả về.
+    """
+    raw_output = run_claude_prompt(prompt, app_name=app_name, cwd=cwd, timeout=timeout, preferred_model=preferred_model)
+    clean_text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', raw_output)
+
+    md_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', clean_text, re.DOTALL)
+    if md_match:
+        clean_json = md_match.group(1).strip()
+    else:
+        start_idx = clean_text.find('{')
+        end_idx = clean_text.rfind('}')
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            clean_json = clean_text[start_idx:end_idx+1].strip()
+        else:
+            clean_json = clean_text.strip()
+            clean_json = re.sub(r"^`{1,3}(?:json)?\s*", "", clean_json, flags=re.IGNORECASE)
+            clean_json = re.sub(r"\s*`{1,3}$", "", clean_json)
+
+    clean_json = re.sub(r'\\(?![/"\\bfnrtu])', r'\\\\', clean_json)
+    try:
+        return json.loads(clean_json)
+    except Exception as e:
+        write_log(app_name, f"⚠️ [LỖI JSON CLAUDE] Không thể parse JSON từ output của Claude Code: {e}\nRaw Output: {raw_output[:300]}...")
+        raise e
+
 def call_ai_json(
     prompt: str,
     app_name: str = "system",
@@ -239,10 +385,14 @@ def call_ai_json(
     """
     Bộ điều phối AI Engine hợp nhất:
     - 'agy': Google Antigravity CLI (Gemini Flash)
+    - 'claude': Anthropic Claude Code CLI (Opus 5.5 / Sonnet 5.5 / Haiku 5.5)
     - 'hermes': Hermes SRE Agent (Open-source LLMs qua API Gateway)
     """
     provider = (ai_provider or "agy").lower().strip()
-    if provider == "hermes":
+    if provider in ["claude", "claude-code", "anthropic"]:
+        to = timeout or 90
+        return run_claude_json(prompt, app_name=app_name, cwd=cwd, timeout=to, preferred_model=preferred_model)
+    elif provider == "hermes":
         to = timeout or 90
         return run_hermes_json(prompt, app_name=app_name, timeout=to, preferred_model=preferred_model)
     else:
@@ -260,10 +410,14 @@ def call_ai_prompt(
     """
     Bộ điều phối AI dạng Text/Chat tự do:
     - 'agy': Google Antigravity CLI
+    - 'claude': Anthropic Claude Code CLI
     - 'hermes': Hermes SRE Agent
     """
     provider = (ai_provider or "agy").lower().strip()
-    if provider == "hermes":
+    if provider in ["claude", "claude-code", "anthropic"]:
+        to = timeout or 90
+        return run_claude_prompt(prompt, app_name=app_name, cwd=cwd, timeout=to, preferred_model=preferred_model)
+    elif provider == "hermes":
         to = timeout or 90
         return run_hermes_prompt(prompt, app_name=app_name, timeout=to, preferred_model=preferred_model)
     else:
