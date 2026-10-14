@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from security import redact_secrets
 from builder_core import (
     K8S_NAMESPACE,
     DOCKER_USER,
@@ -39,6 +40,7 @@ def write_log(app_name: str, message: str):
     Ghi log nối tiếp (append) và ép xả buffer (fsync) ngay lập tức
     để API /api/logs/{app_name} trên Frontend stream theo thời gian thực.
     """
+    message = redact_secrets(str(message))
     os.makedirs(LOGS_DIR, exist_ok=True)
     log_path = f"{LOGS_DIR}/{app_name}.log"
     try:

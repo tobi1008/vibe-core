@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import re
 from typing import Optional
-from fastapi import FastAPI, BackgroundTasks, Request, HTTPException, UploadFile, File, Form, Query
+from fastapi import FastAPI, BackgroundTasks, Request, HTTPException, UploadFile, File, Form, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -13,6 +13,7 @@ from archive_builder_core import deploy_archive_app, deploy_archive_with_db, UPL
 from cicd_core import redeploy_app
 from db_builder_core import deploy_app_with_db, deploy_fullstack_app, delete_app_db_resources
 from monorepo_builder_core import deploy_monorepo_app
+from security import require_api_key, validate_app_name, validate_repo_url, verify_github_signature, redact_secrets, safe_upload_filename
 try:
     from cms_builder_core import deploy_cms_app
 except Exception:
@@ -34,7 +35,7 @@ try:
 except Exception as e:
     hermes_agent_router = None
 
-app = FastAPI(title="Vibe Hosting API", version="2.4.0")
+app = FastAPI(title="Vibe Hosting API", version="2.4.0", dependencies=[Depends(require_api_key)])
 
 app.add_middleware(
     CORSMiddleware,
@@ -219,6 +220,8 @@ class RollbackRequest(BaseModel):
 
 @app.post("/api/deploy")
 async def trigger_deploy(req: DeployRequest, background_tasks: BackgroundTasks):
+    validate_app_name(req.app_name)
+    validate_repo_url(req.repo_url)
     final_url = prepare_repo_url(req.repo_url, req.github_token)
     owner = resolve_github_owner_from_token(req.github_token)
     ai_engine = (req.ai_provider or "agy").lower().strip()
@@ -242,6 +245,7 @@ async def trigger_deploy_open_source(req: OpenSourceDeployRequest, background_ta
     API Triển khai CMS hoặc bất kỳ repo mã nguồn mở nào với Clean Database (DB Trắng)
     Không yêu cầu người dùng nạp file backup SQL.
     """
+    validate_app_name(req.app_name)
     target_repo = (req.repo_url or "").strip()
     cms_type = (req.cms_type or "").strip().lower()
 
@@ -249,6 +253,7 @@ async def trigger_deploy_open_source(req: OpenSourceDeployRequest, background_ta
         final_url = "https://github.com/WordPress/WordPress.git"
         detected_cms = "wordpress"
     else:
+        validate_repo_url(target_repo)
         final_url = prepare_repo_url(target_repo, req.github_token)
         detected_cms = cms_type if cms_type else "custom"
 
@@ -263,7 +268,7 @@ async def trigger_deploy_open_source(req: OpenSourceDeployRequest, background_ta
         "auto_cicd": True,
         "deploy_type": "open_source_clean_db",
         "cms_type": detected_cms,
-        "repo_url": final_url,
+        "repo_url": redact_secrets(final_url),
         "db_type": db_type,
         "primary_github_owner": owner,
         "has_token": bool(req.github_token),
@@ -299,12 +304,14 @@ async def trigger_deploy_db(
     backup_file: Optional[UploadFile] = File(None),
     ai_provider: Optional[str] = Form("agy")
 ):
+    validate_app_name(app_name)
+    validate_repo_url(repo_url)
     final_url = prepare_repo_url(repo_url, github_token)
     owner = resolve_github_owner_from_token(github_token)
     ai_engine = (ai_provider or "agy").lower().strip()
     saved_backup_path = ""
     if backup_file and backup_file.filename:
-        safe_filename = os.path.basename(backup_file.filename)
+        safe_filename = safe_upload_filename(backup_file.filename)
         saved_backup_path = f"{BACKUP_DIR}/{app_name}_{safe_filename}"
         try:
             with open(saved_backup_path, "wb") as buffer:
@@ -336,7 +343,8 @@ async def trigger_deploy_archive(
     app_domain: str = Form(...),
     ai_provider: Optional[str] = Form("agy")
 ):
-    safe_filename = os.path.basename(archive_file.filename)
+    validate_app_name(app_name)
+    safe_filename = safe_upload_filename(archive_file.filename)
     saved_archive_path = f"{UPLOAD_DIR}/{app_name}_{safe_filename}"
     ai_engine = (ai_provider or "agy").lower().strip()
     try:
@@ -374,7 +382,8 @@ async def trigger_deploy_archive_with_db(
     backup_file: Optional[UploadFile] = File(None),
     ai_provider: Optional[str] = Form("agy")
 ):
-    safe_filename = os.path.basename(archive_file.filename)
+    validate_app_name(app_name)
+    safe_filename = safe_upload_filename(archive_file.filename)
     saved_archive_path = f"{UPLOAD_DIR}/{app_name}_{safe_filename}"
     ai_engine = (ai_provider or "agy").lower().strip()
     try:
@@ -387,7 +396,7 @@ async def trigger_deploy_archive_with_db(
 
     saved_backup_path = ""
     if backup_file and backup_file.filename:
-        safe_backup_name = os.path.basename(backup_file.filename)
+        safe_backup_name = safe_upload_filename(backup_file.filename)
         saved_backup_path = f"{BACKUP_DIR}/{app_name}_{safe_backup_name}"
         try:
             with open(saved_backup_path, "wb") as buffer:
@@ -436,6 +445,9 @@ async def trigger_deploy_fullstack(
     backup_file: Optional[UploadFile] = File(None),
     ai_provider: Optional[str] = Form("agy")
 ):
+    validate_app_name(app_name)
+    validate_repo_url(be_repo_url)
+    validate_repo_url(fe_repo_url)
     final_be_url = prepare_repo_url(be_repo_url, github_token)
     final_fe_url = prepare_repo_url(fe_repo_url, github_token)
     owner = resolve_github_owner_from_token(github_token)
@@ -443,7 +455,7 @@ async def trigger_deploy_fullstack(
 
     saved_backup_path = ""
     if backup_file and backup_file.filename:
-        safe_filename = os.path.basename(backup_file.filename)
+        safe_filename = safe_upload_filename(backup_file.filename)
         saved_backup_path = f"{BACKUP_DIR}/{app_name}_{safe_filename}"
         try:
             with open(saved_backup_path, "wb") as buffer:
@@ -482,6 +494,8 @@ async def trigger_deploy_fullstack(
 
 @app.post("/api/deploy-monorepo")
 async def trigger_deploy_monorepo(req: MonorepoDeployRequest, background_tasks: BackgroundTasks):
+    validate_app_name(req.app_name)
+    validate_repo_url(req.repo_url)
     final_url = prepare_repo_url(req.repo_url, req.github_token)
     owner = resolve_github_owner_from_token(req.github_token)
 
@@ -519,11 +533,11 @@ async def sync_app_repo(app_name: str, req: SyncRepoRequest):
     if owner:
         updates["primary_github_owner"] = owner
     if req.be_repo_url:
-        updates["be_repo_url"] = req.be_repo_url
+        updates["be_repo_url"] = validate_repo_url(req.be_repo_url)
     if req.fe_repo_url:
-        updates["fe_repo_url"] = req.fe_repo_url
+        updates["fe_repo_url"] = validate_repo_url(req.fe_repo_url)
     if req.repo_url:
-        updates["repo_url"] = req.repo_url
+        updates["repo_url"] = validate_repo_url(req.repo_url)
 
     save_app_config(app_name, updates)
     return {
@@ -609,7 +623,7 @@ async def get_build_logs(app_name: str):
             content = f.read()
         return {
             "status": "success",
-            "logs": content if content.strip() else f"⏳ Đang khởi tạo tiến trình cho {app_name}..."
+            "logs": redact_secrets(content) if content.strip() else f"⏳ Đang khởi tạo tiến trình cho {app_name}..."
         }
     except Exception as e:
         return {"status": "waiting", "logs": f"⏳ Đang cập nhật log... ({str(e)})"}
@@ -672,8 +686,12 @@ async def manual_redeploy(
 
 @app.post("/api/webhooks/github/{app_name}")
 async def github_webhook(app_name: str, request: Request, background_tasks: BackgroundTasks):
+    body = await request.body()
+    if not verify_github_signature(body, request.headers.get("X-Hub-Signature-256")):
+        raise HTTPException(status_code=401, detail="Chữ ký Webhook không hợp lệ")
+
     try:
-        payload = await request.json()
+        payload = json.loads(body)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 

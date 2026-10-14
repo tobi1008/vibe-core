@@ -273,10 +273,6 @@ def update_and_rebuild_component(
             except Exception as e:
                 write_log(app_name, f"   ⚠️ Lỗi link_frontend_to_backend: {e}")
 
-    # 2. Đóng gói Docker Image bằng Nixpacks chuẩn hóa dùng chung
-    write_log(app_name, f"   [2] Đang đóng gói Docker Image phiên bản mới: {new_image_tag}...")
-    if build_nixpacks_for_cicd:
-        build_nixpacks_for_cicd(target_dir, new_image_tag, app_name)
     # 2. Đóng gói Docker Image bằng hàm chuyên trách nội bộ CI/CD
     write_log(app_name, f"   [2] Đang đóng gói Docker Image phiên bản mới: {new_image_tag}...")
     build_nixpacks_for_cicd(target_dir, new_image_tag, app_name)

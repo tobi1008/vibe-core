@@ -9,6 +9,8 @@ import time
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
+from security import redact_secrets
+
 load_dotenv()
 
 # ==========================================
@@ -425,6 +427,7 @@ def call_ai_prompt(
         return run_agy_prompt(prompt, app_name=app_name, cwd=cwd, timeout=to, preferred_model=preferred_model)
 
 def write_log(app_name, message):
+    message = redact_secrets(str(message))
     os.makedirs(LOGS_DIR, exist_ok=True)
     with open(f"{LOGS_DIR}/{app_name}.log", "a", encoding="utf-8") as f:
         f.write(message + "\n")

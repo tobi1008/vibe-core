@@ -17,6 +17,7 @@ from builder_core import (
     write_log,
 )
 from cicd_core import redeploy_app
+from security import validate_app_name, is_inside_dir, touches_git_dir, redact_secrets
 
 router = APIRouter(prefix="/api/ai-debug", tags=["Hermes Agent - AI Debug"])
 
@@ -180,6 +181,9 @@ def sanitize_k8s_target(raw_target: str, resource_type: str = "deployment", app_
         if real_name:
             return real_name
 
+    # Tên tài nguyên được ghép vào lệnh shell, nên chỉ chấp nhận tên hợp lệ theo chuẩn K8s
+    if not re.fullmatch(r"[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?", clean_target):
+        raise ValueError(f"Tên tài nguyên K8s không hợp lệ: {clean_target[:60]}")
     return clean_target
 
 
@@ -270,7 +274,7 @@ def collect_debug_context(app_name: str, component: str = "be") -> Dict[str, Any
             try:
                 with open(log_path, "r", encoding="utf-8") as f:
                     lines = f.readlines()
-                    context["build_logs"] = "".join(lines[-250:])
+                    context["build_logs"] = redact_secrets("".join(lines[-250:]))
                 break
             except Exception:
                 pass
@@ -541,7 +545,7 @@ def execute_remediation_action(app_name: str, action: RemediationAction) -> Dict
                 break
 
         full_path = os.path.abspath(os.path.join(ws, clean_rel_path))
-        if not full_path.startswith(ws):
+        if not is_inside_dir(ws, full_path) or touches_git_dir(clean_rel_path):
             return {"status": "error", "message": "Từ chối truy cập: Đường dẫn nằm ngoài workspace."}
 
         try:
@@ -573,74 +577,13 @@ def execute_remediation_action(app_name: str, action: RemediationAction) -> Dict
         if not safe_command:
             return {"status": "error", "message": "Lệnh thực thi rỗng."}
 
-        # ⚡ CƠ CHẾ SMART-ROUTE: Nếu Hermes lỡ đưa lệnh kubectl vào exec_pod,
-        # hệ thống tự động đánh chặn và chuyển ra ngoài Host VPS để chạy thành công 100%!
-        if "kubectl " in safe_command or safe_command.startswith("kubectl"):
-            write_log(app_name, f"⚡ [Hermes Smart-Route] Phát hiện lệnh K8s trong exec_pod, tự động chuyển ra Host VPS: {safe_command[:60]}...")
-            
-            # Tự động chuẩn hóa traefik API version nếu có trong lệnh
-            if "traefik.containo.us" in safe_command:
-                safe_command = safe_command.replace("traefik.containo.us/v1alpha1", "traefik.io/v1alpha1")
-
-            ing_match = re.search(r'\bingress(?:es)?(?:\.networking\.k8s\.io)?\s+([a-zA-Z0-9_-]+)', safe_command)
-            if ing_match:
-                cand_ing = ing_match.group(1)
-                real_ing = find_actual_k8s_resource("ingress", cand_ing, app_name)
-                if real_ing and real_ing != cand_ing:
-                    write_log(app_name, f"⚡ [Hermes Auto-Correct] Tự động sửa tên Ingress: '{cand_ing}' -> '{real_ing}'")
-                    safe_command = safe_command.replace(cand_ing, real_ing)
-
-            dep_match = re.search(r'\bdeployment(?:s)?(?:\.apps)?\s+([a-zA-Z0-9_-]+)', safe_command)
-            if dep_match:
-                cand_dep = dep_match.group(1)
-                real_dep = find_actual_k8s_resource("deployment", cand_dep, app_name)
-                if real_dep and real_dep != cand_dep:
-                    write_log(app_name, f"⚡ [Hermes Auto-Correct] Tự động sửa tên Deployment: '{cand_dep}' -> '{real_dep}'")
-                    safe_command = safe_command.replace(cand_dep, real_dep)
-
-            try:
-                host_res = subprocess.run(
-                    safe_command,
-                    shell=True,
-                    text=True,
-                    capture_output=True,
-                    timeout=60,
-                    executable="/bin/bash"
-                )
-                combined_output = f"{host_res.stdout}\n{host_res.stderr}".strip()
-
-                if host_res.returncode != 0 and "NotFound" in combined_output:
-                    not_found_m = re.search(r'ingresses(?:\.networking\.k8s\.io)?\s+"([^"]+)"\s+not found', combined_output)
-                    if not_found_m:
-                        bad_name = not_found_m.group(1)
-                        resolved_name = find_actual_k8s_resource("ingress", bad_name, app_name)
-                        if resolved_name and resolved_name != bad_name:
-                            retry_cmd = safe_command.replace(bad_name, resolved_name)
-                            write_log(app_name, f"🔄 [Hermes Retry] Thử lại với Ingress thực tế '{resolved_name}'...")
-                            retry_res = subprocess.run(
-                                retry_cmd, shell=True, text=True, capture_output=True, timeout=60, executable="/bin/bash"
-                            )
-                            combined_output = f"{retry_res.stdout}\n{retry_res.stderr}".strip()
-                            if retry_res.returncode == 0:
-                                return {
-                                    "status": "success",
-                                    "output": combined_output,
-                                    "message": f"Đã tự động nhận diện và gắn Ingress [{resolved_name}] thành công: {combined_output}"
-                                }
-
-                if host_res.returncode == 0:
-                    return {
-                        "status": "success",
-                        "output": combined_output,
-                        "message": f"Đã thực thi thành công lệnh K8s trên Host VPS: {combined_output or 'Thành công'}"
-                    }
-                return {
-                    "status": "error",
-                    "output": combined_output,
-                    "message": f"Lỗi thực thi lệnh K8s trên Host VPS (Exit code: {host_res.returncode}): {combined_output}"
-                }
-            except Exception as e:
-                return {"status": "error", "message": f"Lỗi thực thi lệnh K8s trên Host: {str(e)}"}
+        # Không bao giờ chạy lệnh do AI sinh ra trực tiếp trên Host VPS.
+        # Thao tác K8s phải đi qua các action có kiểm soát (set_env, apply_manifest, restart_deployment).
+        if re.search(r'\bkubectl\b', safe_command):
+            return {
+                "status": "error",
+                "message": "Từ chối: exec_pod không được chứa lệnh kubectl. Hãy dùng set_env, apply_manifest hoặc restart_deployment."
+            }
 
         raw_target = action.target or (f"{app_name}-{comp}" if comp in ["fe", "be"] else app_name)
         target = sanitize_k8s_target(raw_target, "deployment", app_name)
@@ -790,11 +733,12 @@ def push_healed_workspace_to_git(app_name: str, component: str, token: str) -> D
         }
     except Exception as e:
         write_log(app_name, f"⚠️ [Hermes Auto-heal] Push Git tự động không thành công: {str(e)}")
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": redact_secrets(str(e))}
 
 
 @router.post("/analyze")
 def analyze_app_issues(payload: AIDebugRequest):
+    validate_app_name(payload.app_name)
     context = collect_debug_context(payload.app_name, payload.component or "be")
     ai_result = query_hermes_diagnostics(context, payload.preferred_model, payload.user_note, ai_provider=payload.ai_provider or "agy")
 
@@ -807,7 +751,10 @@ def analyze_app_issues(payload: AIDebugRequest):
             action = RemediationAction(**act_raw)
             if action.action_type == "edit_file":
                 has_edit_file = True
-            res = execute_remediation_action(payload.app_name, action)
+            try:
+                res = execute_remediation_action(payload.app_name, action)
+            except Exception as act_err:
+                res = {"status": "error", "message": f"Lỗi nội bộ khi thực thi hành động: {str(act_err)}"}
             execution_results.append({
                 "action": action.description,
                 "result": res
@@ -894,6 +841,7 @@ def chat_with_hermes(payload: AIChatRequest):
     Endpoint dành riêng cho khung Chat liên tục. 
     Hỗ trợ History và trả về văn bản tự do thay vì ép kiểu JSON.
     """
+    validate_app_name(payload.app_name)
     # 1. Thu thập bối cảnh mới nhất (Log, K8s, Code)
     context = collect_debug_context(payload.app_name, payload.component or "be")
     

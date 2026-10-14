@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from builder_core import BASE_WORKSPACE
 from cicd_core import redeploy_app
+from security import is_inside_dir, touches_git_dir, redact_secrets
 
 router = APIRouter(prefix="/api/project", tags=["File Manager & Git"])
 CONFIG_DB_FILE = "/opt/vibe-hosting/apps_config.json"
@@ -67,8 +68,10 @@ def resolve_project_workspace(project_name: str) -> str:
 def validate_safe_path(base_dir: str, target_rel_path: str) -> str:
     """Ngăn chặn lỗ hổng Directory Traversal"""
     full_path = os.path.abspath(os.path.join(base_dir, target_rel_path))
-    if not full_path.startswith(base_dir):
+    if not is_inside_dir(base_dir, full_path):
         raise HTTPException(status_code=403, detail="Từ chối truy cập: Đường dẫn nằm ngoài workspace dự án.")
+    if touches_git_dir(target_rel_path):
+        raise HTTPException(status_code=403, detail="Từ chối truy cập: Không được đọc/ghi thư mục .git.")
     return full_path
 
 
@@ -317,7 +320,7 @@ def push_changes_to_github(
             results.append({
                 "component": comp_label,
                 "status": "error",
-                "message": f"[{comp_label.upper()}] Thất bại: {str(e)}"
+                "message": f"[{comp_label.upper()}] Thất bại: {redact_secrets(str(e))}"
             })
 
     # Cập nhật apps_config.json vĩnh viễn
