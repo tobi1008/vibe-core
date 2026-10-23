@@ -68,9 +68,9 @@ def get_ai_providers():
         "providers": [
             {
                 "id": "agy",
-                "name": "Google Antigravity (Gemini Flash)",
+                "name": "Google Antigravity (Gemini 3.8 Flash)",
                 "badge": "Khuyên dùng - Nhanh (5-15s)",
-                "description": "Thực thi CLI trực tiếp trên VPS, tự động dự phòng 5 tầng Gemini Flash",
+                "description": "Thực thi CLI trực tiếp trên VPS, tự động dự phòng 3 tầng Gemini 3.8 Flash (Low / Medium / High)",
                 "models": AGY_MODELS
             },
             {
@@ -84,7 +84,7 @@ def get_ai_providers():
                 "id": "hermes",
                 "name": "Hermes Agent (Open-Source LLMs)",
                 "badge": "Mô hình mã nguồn mở",
-                "description": "Bộ não suy luận Hermes nguyên bản gọi qua API Gateway nội bộ",
+                "description": "Bộ não suy luận Hermes qua API Gateway (Solar, Longcat, Laguna, Step, Beam, Ornith)",
                 "models": HERMES_MODELS
             }
         ]

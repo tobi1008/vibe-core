@@ -26,8 +26,6 @@ LOGS_DIR = "/opt/vibe-hosting/logs"
 # CẤU HÌNH AI ENGINES: ANTIGRAVITY (AGY), CLAUDE CODE & HERMES
 # ==========================================
 AGY_MODELS = [
-    "gemini-3.7-flash-high",
-    "gemini-3.7-flash-medium",
     "gemini-3.8-flash-low",
     "gemini-3.8-flash-medium",
     "gemini-3.8-flash-high",
@@ -46,13 +44,13 @@ HEADERS = {
     "Authorization": f"Bearer {os.getenv('INTERNAL_BEARER_TOKEN', '')}"
 }
 HERMES_MODELS = [
-    "stepfun/step-3.7-flash:free",
-    "poolside/laguna-s-2.1:free",
+    "upstage/solar-mini4:free",
     "meituan/longcat-2.5-preview:free",
-    "inclusionai/ling-3.0-flash-sante:free",
-    "nvidia/nemotron-3-ultra:free",
-    "openrouter/free",
-    "poolside/laguna-xs-2.1:free"
+    "poolside/laguna-xs-2.1:free",
+    "poolside/laguna-s-2.1:free",
+    "stepfun/step-3.7-flash:free",
+    "reflection/beam-1.0-501b-a23b:free",
+    "ornith/ornith-1.5-122b:free",
 ]
 
 def get_agy_bin() -> str:
@@ -142,6 +140,21 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
         except Exception as e:
             write_log(app_name, f"⚠️ Lỗi thực thi agy ({agy_bin}) với [{model_name}]: {str(e)}")
             last_err = str(e)
+
+    # Thử phương án dự phòng mặc định (không truyền --model để dùng model mặc định của agy)
+    try:
+        write_log(app_name, "🤖 [Antigravity AI] Đang thử phương án gọi agy với cấu hình model mặc định...")
+        cmd = [
+            agy_bin,
+            "-p", safe_prompt,
+            "--dangerously-skip-permissions"
+        ]
+        res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=custom_env, stdin=subprocess.DEVNULL)
+        if res.returncode == 0 and res.stdout.strip():
+            write_log(app_name, "✅ [Antigravity AI] Model mặc định phản hồi thành công!")
+            return res.stdout.strip()
+    except Exception:
+        pass
 
     raise Exception(f"Tất cả các Model Antigravity đều không phản hồi: {last_err}")
 
