@@ -2,7 +2,6 @@ import os
 import json
 import shutil
 import subprocess
-import re
 from typing import Optional
 from fastapi import FastAPI, BackgroundTasks, Request, HTTPException, UploadFile, File, Form, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +12,7 @@ from archive_builder_core import deploy_archive_app, deploy_archive_with_db, UPL
 from cicd_core import redeploy_app
 from db_builder_core import deploy_app_with_db, deploy_fullstack_app, delete_app_db_resources
 from monorepo_builder_core import deploy_monorepo_app
-from hermes_verifier import verify_deployment, discover_workloads, load_report
+from hermes_verifier import verify_deployment, discover_workloads, load_report, revision_history
 from security import require_api_key, validate_app_name, validate_repo_url, verify_github_signature, redact_secrets, safe_upload_filename
 try:
     from cms_builder_core import deploy_cms_app
@@ -601,7 +600,7 @@ def purge_app_workspace_and_configs(app_name: str):
 
     # 4. Xóa log build cũ để chuẩn bị môi trường sạch
     try:
-        for log_path in (f"{LOG_DIR}/{app_name}.log", f"{LOG_DIR}/{app_name}.health.json"):
+        for log_path in (f"{LOG_DIR}/{app_name}.log", f"{LOG_DIR}/{app_name}.health.json", f"{LOG_DIR}/{app_name}.revisions.json"):
             if os.path.exists(log_path):
                 os.remove(log_path)
     except Exception:
@@ -737,44 +736,17 @@ def trigger_health_check(app_name: str, background_tasks: BackgroundTasks):
 
 @app.get("/api/apps/{app_name}/history")
 def get_app_rollout_history(app_name: str, component: Optional[str] = Query(None)):
-    """API lấy lịch sử các phiên bản Deploy của K8s"""
+    """Lịch sử các phiên bản Deploy (ReplicaSet) kèm trạng thái thật: đang chạy / lỗi / đang khởi động / bản cũ"""
     target_deploy = f"{app_name}-{component}" if component in ["be", "fe"] else app_name
-    
-    try:
-        # Kiểm tra Deployment có tồn tại không
-        check_cmd = f"kubectl get deployment {target_deploy} -n {K8S_NAMESPACE}"
-        subprocess.run(check_cmd, shell=True, check=True, capture_output=True)
-
-        # Lấy lịch sử từ K8s
-        history_cmd = f"kubectl rollout history deployment/{target_deploy} -n {K8S_NAMESPACE}"
-        result = subprocess.run(history_cmd, shell=True, capture_output=True, text=True, check=True)
-        
-        # Phân tích chuỗi text K8s trả về thành mảng JSON JSON
-        lines = result.stdout.strip().split('\n')
-        revisions = []
-        for line in lines:
-            # Tìm các dòng bắt đầu bằng số (số Revision)
-            match = re.match(r'^\s*(\d+)\s+(.*)', line)
-            if match:
-                rev_num = int(match.group(1))
-                cause = match.group(2).strip()
-                if cause == "<none>":
-                    cause = "Bản cập nhật tự động (CI/CD / Image Update)"
-                revisions.append({"revision": rev_num, "cause": cause})
-
-        # Sắp xếp để phiên bản mới nhất (số to nhất) lên đầu
-        revisions.sort(key=lambda x: x["revision"], reverse=True)
-
-        return {
-            "status": "success",
-            "app_name": app_name,
-            "target": target_deploy,
-            "history": revisions
-        }
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy Deployment '{target_deploy}' hoặc chưa có lịch sử. (Lỗi: {e.stderr})")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    history = revision_history(app_name, target_deploy)
+    if history is None:
+        raise HTTPException(status_code=404, detail=f"Không tìm thấy Deployment '{target_deploy}' hoặc chưa có lịch sử.")
+    return {
+        "status": "success",
+        "app_name": app_name,
+        "target": target_deploy,
+        "history": history
+    }
 
 @app.post("/api/apps/{app_name}/rollback")
 def trigger_app_rollback(app_name: str, req: RollbackRequest):

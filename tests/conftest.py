@@ -81,6 +81,7 @@ class FakeKubectl:
         self.workloads = {}   # "deployment/x" -> dict JSON (None = không tồn tại)
         self.pods = {}        # selector -> danh sách pod JSON
         self.logs = ""
+        self.replicasets = []  # danh sách ReplicaSet JSON cho lịch sử triển khai
         self.calls = []
 
     def __call__(self, args, timeout=30):
@@ -95,6 +96,8 @@ class FakeKubectl:
             return ok() if ready else subprocess.CompletedProcess(args, 1, "", "timed out waiting for the condition")
         if args[:2] == ["get", "pods"]:
             return ok(json.dumps({"items": self.pods.get(args[3], [])}))
+        if args[:2] == ["get", "rs"]:
+            return ok(json.dumps({"items": self.replicasets}))
         if args[0] == "get" and args[1] == "events":
             return ok("")
         if args[0] == "get" and args[1] == "deployment,statefulset":

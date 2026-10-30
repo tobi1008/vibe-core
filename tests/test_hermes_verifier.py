@@ -182,3 +182,17 @@ def test_docker_layer_progress_is_stripped_from_build_log(paths):
     )
     tail = hermes_verifier.read_build_log_tail("shop")
     assert "Waiting" not in tail and "digest: sha256:abc" in tail
+
+
+def test_verdict_recorded_for_new_revision_only(paths, kube):
+    kube.workloads = {"deployment/shop": {
+        "metadata": {"annotations": {"deployment.kubernetes.io/revision": "4"}},
+        "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "shop"}}}, "status": {}}}
+    kube.rollout_ok = False
+    kube.pods = {"app=shop": [pod("shop-1", "CrashLoopBackOff", restarts=2)]}
+    hermes_verifier.verify_deployment("shop", ["deployment/shop"])
+    assert hermes_verifier.load_revision_verdicts("shop")["deployment/shop"]["4"]["status"] == "code_error"
+
+    # Build lỗi trước khi apply => revision 4 trên K3s vẫn là bản cũ, không được gán lỗi lần này
+    hermes_verifier.verify_deployment("shop", ["deployment/shop"], error="nixpacks build failed")
+    assert hermes_verifier.load_revision_verdicts("shop")["deployment/shop"]["4"]["status"] == "code_error"

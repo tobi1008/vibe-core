@@ -69,6 +69,37 @@ def report_path(app_name: str) -> str:
     return os.path.join(builder_core.LOGS_DIR, f"{app_name}.health.json")
 
 
+def revisions_path(app_name: str) -> str:
+    return os.path.join(builder_core.LOGS_DIR, f"{app_name}.revisions.json")
+
+
+def load_revision_verdicts(app_name: str) -> Dict[str, Dict[str, Any]]:
+    """Kết luận của Hermes cho từng revision: {"deployment/x": {"3": {"ready": bool, "status": ...}}}"""
+    try:
+        with open(revisions_path(app_name), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def record_revision_verdicts(app_name: str, snapshot: List[Dict[str, Any]], rollout: Dict[str, Any], status: str):
+    data = load_revision_verdicts(app_name)
+    for w in snapshot:
+        if not w.get("revision"):
+            continue
+        ready = rollout.get(w["workload"], {}).get("ready", False)
+        data.setdefault(w["workload"], {})[w["revision"]] = {
+            "ready": ready,
+            "status": "healthy" if ready else status,
+            "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+    try:
+        with open(revisions_path(app_name), "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+
 def load_report(app_name: str) -> Optional[Dict[str, Any]]:
     try:
         with open(report_path(app_name), "r", encoding="utf-8") as f:
@@ -160,10 +191,12 @@ def collect_workload(workload: str, with_logs: bool = True) -> Dict[str, Any]:
         return info
 
     info["found"] = True
+    info["revision"] = (obj.get("metadata", {}).get("annotations", {}) or {}).get("deployment.kubernetes.io/revision")
     info["replicas"] = obj.get("spec", {}).get("replicas", 1)
     info["ready_replicas"] = obj.get("status", {}).get("readyReplicas", 0) or 0
     labels = obj.get("spec", {}).get("selector", {}).get("matchLabels", {}) or {}
     selector = ",".join(f"{k}={v}" for k, v in labels.items())
+    info["selector"] = selector
 
     pods = []
     if selector:
@@ -175,6 +208,7 @@ def collect_workload(workload: str, with_logs: bool = True) -> Dict[str, Any]:
         for pod in items:
             pods.append({
                 "name": pod.get("metadata", {}).get("name"),
+                "template_hash": (pod.get("metadata", {}).get("labels", {}) or {}).get("pod-template-hash"),
                 "phase": pod.get("status", {}).get("phase"),
                 "conditions": [
                     {"type": c.get("type"), "status": c.get("status"), "reason": c.get("reason"), "message": (c.get("message") or "")[:200]}
@@ -350,9 +384,73 @@ def verify_deployment(app_name: str, workloads: List[str], error: Optional[str] 
     except Exception:
         pass
 
+    # Khi pipeline lỗi trước bước apply, revision đang có trên K3s là bản cũ => không gán kết luận cho nó
+    if not error:
+        record_revision_verdicts(app_name, snapshot, rollout, status)
+
     if log:
         log(app_name, format_report(report))
     return report
+
+
+def revision_history(app_name: str, deployment: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    Lịch sử revision của một Deployment, lấy từ ReplicaSet thật trên K3s (thời gian tạo, image, Pod Ready)
+    kết hợp với kết luận Hermes đã ghi lại. Trả về None nếu Deployment không tồn tại.
+    state: running (đang chạy ổn định) | starting | failed | previous (bản cũ)
+    """
+    info = collect_workload(f"deployment/{deployment}", with_logs=False)
+    if not info["found"]:
+        return None
+
+    rs_res = _kubectl(["get", "rs", "-l", info.get("selector", ""), "-o", "json"])
+    try:
+        replicasets = json.loads(rs_res.stdout).get("items", []) if rs_res.returncode == 0 else []
+    except Exception:
+        replicasets = []
+
+    verdicts = load_revision_verdicts(app_name).get(f"deployment/{deployment}", {})
+    history = []
+    for rs in replicasets:
+        meta = rs.get("metadata", {})
+        annotations = meta.get("annotations", {}) or {}
+        revision = annotations.get("deployment.kubernetes.io/revision")
+        if not revision or not revision.isdigit():
+            continue
+        desired = rs.get("spec", {}).get("replicas", 0) or 0
+        ready = rs.get("status", {}).get("readyReplicas", 0) or 0
+        containers = rs.get("spec", {}).get("template", {}).get("spec", {}).get("containers", []) or [{}]
+        template_hash = (meta.get("labels", {}) or {}).get("pod-template-hash")
+        verdict = verdicts.get(revision)
+        verdict_failed = bool(verdict) and not verdict.get("ready") and verdict.get("status") not in ("starting", "unknown")
+        is_current = revision == info.get("revision")
+
+        if is_current:
+            # Trạng thái thực tế đang chạy luôn được ưu tiên hơn kết luận cũ
+            pods = [p for p in info.get("pods", []) if p.get("template_hash") == template_hash]
+            if desired > 0 and ready >= desired:
+                state = "running"
+            elif verdict_failed or blocking_reasons({"found": True, "pods": pods}):
+                state = "failed"
+            else:
+                state = "starting"
+        else:
+            state = "failed" if verdict_failed else "previous"
+
+        history.append({
+            "revision": int(revision),
+            "cause": annotations.get("kubernetes.io/change-cause") or "Bản cập nhật tự động (CI/CD / Image Update)",
+            "created_at": meta.get("creationTimestamp"),
+            "image": containers[0].get("image"),
+            "replicas": desired,
+            "ready_replicas": ready,
+            "is_current": is_current,
+            "state": state,
+            "verdict": verdict,
+        })
+
+    history.sort(key=lambda h: h["revision"], reverse=True)
+    return history
 
 
 def format_report(report: Dict[str, Any]) -> str:

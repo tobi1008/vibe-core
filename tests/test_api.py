@@ -238,16 +238,61 @@ def test_rollback_builds_expected_command(client, monkeypatch):
     assert seen[0] == "kubectl rollout undo deployment/shop-be --to-revision=3 -n default"
 
 
-def test_history_parses_revisions(client, monkeypatch):
-    out = "deployment.apps/shop\nREVISION  CHANGE-CAUSE\n1         <none>\n2         update image\n"
+def rs(revision, ready, desired=1, hash_="h", created="2026-10-30T10:00:00Z", image="tobi1008/shop:latest"):
+    return {
+        "metadata": {"annotations": {"deployment.kubernetes.io/revision": str(revision)},
+                     "labels": {"pod-template-hash": hash_}, "creationTimestamp": created},
+        "spec": {"replicas": desired, "template": {"spec": {"containers": [{"image": image}]}}},
+        "status": {"readyReplicas": ready},
+    }
 
-    def fake_run(cmd, **kwargs):
-        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
 
-    monkeypatch.setattr(main.subprocess, "run", fake_run)
+def deployment(revision, ready=1):
+    return {"metadata": {"annotations": {"deployment.kubernetes.io/revision": str(revision)}},
+            "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "shop"}}},
+            "status": {"readyReplicas": ready}}
+
+
+def test_history_uses_real_replicasets(client, kube):
+    kube.workloads = {"deployment/shop": deployment(2)}
+    kube.replicasets = [rs(1, 0, desired=0, hash_="a", created="2026-10-29T08:00:00Z"),
+                        rs(2, 1, hash_="b", created="2026-10-30T09:00:00Z", image="tobi1008/shop:1761800000")]
     history = client.get("/api/apps/shop/history").json()["history"]
-    assert [h["revision"] for h in history] == [2, 1]
-    assert history[1]["cause"].startswith("Bản cập nhật tự động")
+    assert [(h["revision"], h["state"], h["is_current"]) for h in history] == [(2, "running", True), (1, "previous", False)]
+    assert history[0]["created_at"] == "2026-10-30T09:00:00Z"
+    assert history[0]["image"] == "tobi1008/shop:1761800000"
+
+
+def test_history_current_revision_crashing_is_failed(client, kube):
+    kube.workloads = {"deployment/shop": deployment(2, ready=0)}
+    kube.replicasets = [rs(1, 0, desired=0, hash_="a"), rs(2, 0, hash_="b")]
+    crashing = {"metadata": {"name": "shop-b-1", "labels": {"pod-template-hash": "b"}},
+                "status": {"phase": "Running", "containerStatuses": [
+                    {"name": "shop", "ready": False, "restartCount": 3, "state": {"waiting": {"reason": "CrashLoopBackOff"}}}]}}
+    kube.pods = {"app=shop": [crashing]}
+    history = client.get("/api/apps/shop/history").json()["history"]
+    assert history[0]["state"] == "failed"
+
+
+def test_history_marks_revision_hermes_found_failed(client, kube, paths):
+    # Revision 2 từng deploy lỗi (Hermes ghi nhận), sau đó đã rollback về bản 3 (= nội dung bản 1)
+    (paths.logs / "shop.revisions.json").write_text(json.dumps(
+        {"deployment/shop": {"2": {"ready": False, "status": "code_error"}}}))
+    kube.workloads = {"deployment/shop": deployment(3)}
+    kube.replicasets = [rs(2, 0, desired=0, hash_="b"), rs(3, 1, hash_="a")]
+    history = client.get("/api/apps/shop/history").json()["history"]
+    assert [(h["revision"], h["state"]) for h in history] == [(3, "running"), (2, "failed")]
+
+
+def test_history_starting_pod_is_not_running(client, kube):
+    kube.workloads = {"deployment/shop": deployment(1, ready=0)}
+    kube.replicasets = [rs(1, 0, hash_="a")]
+    assert client.get("/api/apps/shop/history").json()["history"][0]["state"] == "starting"
+
+
+def test_history_missing_deployment_404(client, kube):
+    kube.workloads = {"deployment/shop": None}
+    assert client.get("/api/apps/shop/history").status_code == 404
 
 
 # ---------- Hermes Verifier endpoints ----------
