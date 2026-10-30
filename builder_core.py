@@ -453,6 +453,14 @@ def call_ai_prompt(
         to = timeout or 75
         return run_agy_prompt(prompt, app_name=app_name, cwd=cwd, timeout=to, preferred_model=preferred_model)
 
+def new_image_tag(image_repo: str) -> str:
+    """
+    Tag image theo thời điểm build (giống CI/CD) thay cho :latest, để mỗi revision trên K3s
+    trỏ tới đúng một image => Rollback đưa đúng bản code cũ trở lại.
+    """
+    return f"{image_repo}:{int(time.time())}"
+
+
 def write_log(app_name, message):
     message = redact_secrets(str(message))
     os.makedirs(LOGS_DIR, exist_ok=True)
@@ -479,7 +487,7 @@ def deploy_app(repo_url: str, app_name: str, app_domain: str, ai_provider: str =
 
     from hermes_verifier import finalize_pipeline
 
-    IMAGE_TAG = f"{DOCKER_USER}/{app_name}:latest"
+    IMAGE_TAG = new_image_tag(f"{DOCKER_USER}/{app_name}")
     WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
     workloads = [f"deployment/{app_name}"]
 
@@ -704,10 +712,16 @@ def delete_app(app_name: str):
     except Exception as e:
         write_log(app_name, f"Lỗi phụ khi xóa K3s (bỏ qua): {e}")
 
-    IMAGE_TAG = f"{DOCKER_USER}/{app_name}:latest"
     try:
         write_log(app_name, f"[2] Đang xóa Local Docker Image...")
-        subprocess.run(["docker", "rmi", "-f", IMAGE_TAG], check=False, capture_output=True)
+        # Mỗi lần build có một tag riêng => xóa mọi tag của repository image này
+        listed = subprocess.run(
+            ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}", f"{DOCKER_USER}/{app_name}"],
+            capture_output=True, text=True, check=False
+        )
+        local_tags = [t for t in listed.stdout.split() if t.strip()]
+        if local_tags:
+            subprocess.run(["docker", "rmi", "-f", *local_tags], check=False, capture_output=True)
     except Exception: pass
 
     try:

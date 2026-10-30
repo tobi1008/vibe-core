@@ -21,6 +21,7 @@ from builder_core import (
     BASE_WORKSPACE,
     LOGS_DIR,
     run_cmd,
+    new_image_tag,
     run_agy_json,
     call_ai_json,
     delete_app,
@@ -237,7 +238,7 @@ def deploy_archive_app(archive_path: str, app_name: str, app_domain: str, ai_pro
     try:
         write_log(app_name, f"\n=== [BẮT ĐẦU DEPLOY TỪ FILE NÉN] {app_name} (AI Engine: {ai_provider.upper()}) ===")
 
-        IMAGE_TAG = f"{DOCKER_USER}/{app_name}:latest"
+        IMAGE_TAG = new_image_tag(f"{DOCKER_USER}/{app_name}")
         WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
 
         os.makedirs(BASE_WORKSPACE, exist_ok=True)
@@ -695,7 +696,7 @@ def deploy_archive_with_db(
         auto_patch_nodejs_esm_conflicts(WORKSPACE_DIR, app_name)
 
         # Bước 5: Build Image bằng Nixpacks
-        IMAGE_TAG = f"{DOCKER_USER}/{app_name}:latest"
+        IMAGE_TAG = new_image_tag(f"{DOCKER_USER}/{app_name}")
         write_log(app_name, f"\n[6] Bắt đầu build Docker image ({IMAGE_TAG})...")
         run_cmd(["nixpacks", "build", ".", "--name", IMAGE_TAG], app_name, cwd=WORKSPACE_DIR)
 

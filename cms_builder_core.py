@@ -15,7 +15,7 @@ import subprocess
 import time
 from typing import Optional
 
-from builder_core import write_log, run_cmd, DOCKER_USER, K8S_NAMESPACE, BASE_WORKSPACE
+from builder_core import write_log, run_cmd, new_image_tag, DOCKER_USER, K8S_NAMESPACE, BASE_WORKSPACE
 from hermes_verifier import finalize_pipeline
 from db_builder_core import (
     generate_db_password,
@@ -305,7 +305,7 @@ def deploy_cms_app(
         auto_patch_nodejs_esm_conflicts(WORKSPACE_DIR, app_name)
 
         # [5] Build Docker Image bằng Nixpacks
-        IMAGE_TAG = f"{DOCKER_USER}/{app_name}:latest"
+        IMAGE_TAG = new_image_tag(f"{DOCKER_USER}/{app_name}")
         k8s_dir = f"{WORKSPACE_DIR}/k8s"
         with open(f"{k8s_dir}/deployment.yaml", "w", encoding="utf-8") as f:
             f.write(generate_standard_deployment(app_name, IMAGE_TAG, detected_port, db_info))

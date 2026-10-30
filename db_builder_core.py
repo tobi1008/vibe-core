@@ -16,7 +16,7 @@ except ImportError:
 
 from security import safe_join
 from hermes_verifier import finalize_pipeline
-from builder_core import write_log, run_cmd, DOCKER_USER, BASE_WORKSPACE, K8S_NAMESPACE, HERMES_API_URL, HEADERS, FALLBACK_MODELS
+from builder_core import write_log, run_cmd, new_image_tag, DOCKER_USER, BASE_WORKSPACE, K8S_NAMESPACE, HERMES_API_URL, HEADERS, FALLBACK_MODELS
 
 def generate_db_password(length=12):
     chars = string.ascii_letters + string.digits
@@ -861,7 +861,7 @@ def deploy_app_with_db(repo_url: str, app_name: str, app_domain: str, db_type: s
         # Tự động vá ESM/CommonJS cho Node.js
         auto_patch_nodejs_esm_conflicts(WORKSPACE_DIR, app_name)
 
-        IMAGE_TAG = f"{DOCKER_USER}/{app_name}:latest"
+        IMAGE_TAG = new_image_tag(f"{DOCKER_USER}/{app_name}")
         k8s_dir = f"{WORKSPACE_DIR}/k8s"
         with open(f"{k8s_dir}/deployment.yaml", "w", encoding="utf-8") as f:
             f.write(generate_standard_deployment(app_name, IMAGE_TAG, detected_port, db_info))
@@ -940,7 +940,7 @@ def deploy_fullstack_app(app_name: str, be_repo_url: str, be_domain: str, fe_rep
         # Tự động vá lỗi cú pháp Node.js cho Backend của repo thứ 3
         auto_patch_nodejs_esm_conflicts(BE_WORKSPACE, app_name)
 
-        BE_IMAGE = f"{DOCKER_USER}/{BE_APP_NAME}:latest"
+        BE_IMAGE = new_image_tag(f"{DOCKER_USER}/{BE_APP_NAME}")
         be_k8s = f"{BE_WORKSPACE}/k8s"
         os.makedirs(be_k8s, exist_ok=True)
         with open(f"{be_k8s}/deployment.yaml", "w", encoding="utf-8") as f:
@@ -968,7 +968,7 @@ def deploy_fullstack_app(app_name: str, be_repo_url: str, be_domain: str, fe_rep
         fe_port = detect_app_port(FE_WORKSPACE, 3000)
         write_log(app_name, f"   -> Cổng hoạt động của Frontend: {fe_port}")
         
-        FE_IMAGE = f"{DOCKER_USER}/{FE_APP_NAME}:latest"
+        FE_IMAGE = new_image_tag(f"{DOCKER_USER}/{FE_APP_NAME}")
         fe_k8s = f"{FE_WORKSPACE}/k8s"
         os.makedirs(fe_k8s, exist_ok=True)
         with open(f"{fe_k8s}/deployment.yaml", "w", encoding="utf-8") as f:

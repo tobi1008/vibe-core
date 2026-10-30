@@ -1,4 +1,5 @@
 import os
+import re
 
 import pytest
 
@@ -60,10 +61,12 @@ def test_deploy_app_happy_path(paths, fake_cmds, monkeypatch):
     builder_core.deploy_app("https://github.com/u/shop", "shop", "shop.example.com")
 
     ws = paths.ws / "shop"
-    assert "image: tobi1008/shop:latest" in (ws / "k8s" / "deployment.yaml").read_text()
+    pushed = [c[2] for c in fake_cmds if c[:2] == ["docker", "push"]]
+    assert len(pushed) == 1 and re.fullmatch(r"tobi1008/shop:\d{10}", pushed[0])  # tag theo thời điểm build, không dùng :latest
+    assert f"image: {pushed[0]}" in (ws / "k8s" / "deployment.yaml").read_text()
+    assert ["nixpacks", "build", ".", "--name", pushed[0]] in fake_cmds
     assert "nginx" not in (ws / "k8s" / "deployment.yaml").read_text()
     assert "'0.0.0.0'" in (ws / "server.js").read_text()
-    assert ["docker", "push", "tobi1008/shop:latest"] in fake_cmds
     assert sum(1 for c in fake_cmds if c[:2] == ["kubectl", "apply"]) == 3
     assert log_lines(paths, "shop")[-1] == "DONE"
 
@@ -126,3 +129,10 @@ def test_deploy_app_errors_when_pods_never_ready(paths, fake_cmds, monkeypatch, 
     lines = log_lines(paths, "shop")
     assert lines[-1] == "ERROR"
     assert not any("[HOÀN TẤT]" in line for line in lines)
+
+
+def test_each_deploy_gets_a_new_image_tag(monkeypatch):
+    ticks = iter([1761800000, 1761800500])
+    monkeypatch.setattr(builder_core.time, "time", lambda: next(ticks))
+    assert builder_core.new_image_tag("tobi1008/shop") == "tobi1008/shop:1761800000"
+    assert builder_core.new_image_tag("tobi1008/shop-be") == "tobi1008/shop-be:1761800500"

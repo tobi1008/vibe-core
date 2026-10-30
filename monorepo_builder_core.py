@@ -5,7 +5,7 @@ import json
 import re
 import secrets
 
-from builder_core import write_log, run_cmd, DOCKER_USER, BASE_WORKSPACE, K8S_NAMESPACE
+from builder_core import write_log, run_cmd, new_image_tag, DOCKER_USER, BASE_WORKSPACE, K8S_NAMESPACE
 from hermes_verifier import finalize_pipeline
 from db_builder_core import (
     generate_db_password,
@@ -380,7 +380,7 @@ def deploy_monorepo_app(repo_url: str, app_name: str, be_domain: str, fe_domain:
         auto_patch_nodejs_esm_conflicts(be_dir, app_name)
         patch_backend_cors(be_dir, fe_domain, app_name)
 
-        BE_IMAGE = f"{DOCKER_USER}/{app_name}-be:latest"
+        BE_IMAGE = new_image_tag(f"{DOCKER_USER}/{app_name}-be")
         k8s_be_dir = f"{be_dir}/k8s"
         os.makedirs(k8s_be_dir, exist_ok=True)
 
@@ -459,7 +459,7 @@ cmd = "{be_start_cmd}"
             patch_frontend_api_endpoints(fe_dir, be_domain, app_name)
             fe_port = detect_app_port(fe_dir, 3000)
 
-            FE_IMAGE = f"{DOCKER_USER}/{app_name}-fe:latest"
+            FE_IMAGE = new_image_tag(f"{DOCKER_USER}/{app_name}-fe")
             k8s_fe_dir = f"{fe_dir}/k8s"
             os.makedirs(k8s_fe_dir, exist_ok=True)
             with open(f"{k8s_fe_dir}/deployment.yaml", "w", encoding="utf-8") as f:
