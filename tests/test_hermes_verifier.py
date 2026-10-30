@@ -126,3 +126,59 @@ def test_verifier_crash_does_not_break_pipeline(paths, monkeypatch):
     monkeypatch.setattr(hermes_verifier, "verify_deployment", broken)
     assert hermes_verifier.finalize_pipeline("shop", ["deployment/shop"])
     assert log_lines(paths, "shop")[-1] == "DONE"
+
+
+def test_waits_while_image_is_being_pulled(paths, kube, monkeypatch):
+    # Tình huống thực tế (app "profile"): Pod ContainerCreating lâu vì đang kéo image lớn, sau đó Ready
+    monkeypatch.setattr(hermes_verifier, "ROLLOUT_TIMEOUT", 600)
+    kube.rollout_ok = [False, False, True]
+    kube.pods = {"app=shop": [pod("shop-1", "ContainerCreating")]}
+    assert hermes_verifier.finalize_pipeline("shop", ["deployment/shop"])
+    assert sum(1 for c in kube.calls if c[0] == "rollout") == 3
+    assert log_lines(paths, "shop")[-1] == "DONE"
+
+
+@pytest.mark.parametrize("reason", ["ImagePullBackOff", "CrashLoopBackOff", "CreateContainerConfigError"])
+def test_stops_waiting_on_definite_failure(paths, kube, monkeypatch, reason):
+    monkeypatch.setattr(hermes_verifier, "ROLLOUT_TIMEOUT", 600)
+    kube.rollout_ok = False
+    kube.workloads = {"deployment/shop": not_ready_deployment("shop")}
+    kube.pods = {"app=shop": [pod("shop-1", reason)]}
+    report = hermes_verifier.verify_deployment("shop", ["deployment/shop"])
+    assert sum(1 for c in kube.calls if c[0] == "rollout") == 1
+    assert reason in report["workloads"][0]["rollout"]
+
+
+def test_container_creating_after_timeout_is_starting_not_error(paths, kube):
+    kube.rollout_ok = False
+    kube.workloads = {"deployment/shop": not_ready_deployment("shop")}
+    kube.pods = {"app=shop": [pod("shop-1", "ContainerCreating", phase="Pending")]}
+    report = hermes_verifier.verify_deployment("shop", ["deployment/shop"])
+    assert report["status"] == "starting"
+
+
+def test_hermes_cannot_blame_build_when_build_succeeded(paths, kube, monkeypatch):
+    kube.rollout_ok = False
+    kube.workloads = {"deployment/shop": not_ready_deployment("shop")}
+    kube.pods = {"app=shop": [pod("shop-1", "ContainerCreating", phase="Pending")]}
+    prompts = []
+
+    def hermes(prompt, **kw):
+        prompts.append(prompt)
+        return {"status": "build_error", "summary": "Image build lỗi"}
+
+    monkeypatch.setattr(hermes_verifier, "HERMES_VERIFY_ENABLED", True)
+    monkeypatch.setattr(hermes_verifier, "run_hermes_json", hermes)
+    report = hermes_verifier.verify_deployment("shop", ["deployment/shop"])
+    assert report["status"] == "starting"
+    assert "build_error" not in prompts[0].split("Chỉ được chọn")[1].splitlines()[0]
+
+
+def test_docker_layer_progress_is_stripped_from_build_log(paths):
+    (paths.logs / "shop.log").write_text(
+        "[6] Đang đẩy Image lên Docker Hub\n"
+        + "4c134b02cb7e: Waiting\n" * 300
+        + "latest: digest: sha256:abc size: 856\n"
+    )
+    tail = hermes_verifier.read_build_log_tail("shop")
+    assert "Waiting" not in tail and "digest: sha256:abc" in tail

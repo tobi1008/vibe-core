@@ -89,7 +89,10 @@ class FakeKubectl:
         self.calls.append(args)
         ok = lambda out="": subprocess.CompletedProcess(args, 0, out, "")
         if args[0] == "rollout":
-            return ok() if self.rollout_ok else subprocess.CompletedProcess(args, 1, "", "timed out waiting for the condition")
+            # rollout_ok có thể là list để mô phỏng nhiều lần poll (vd: [False, True] = đang kéo image rồi Ready)
+            ready = self.rollout_ok.pop(0) if isinstance(self.rollout_ok, list) and len(self.rollout_ok) > 1 else (
+                self.rollout_ok[0] if isinstance(self.rollout_ok, list) else self.rollout_ok)
+            return ok() if ready else subprocess.CompletedProcess(args, 1, "", "timed out waiting for the condition")
         if args[:2] == ["get", "pods"]:
             return ok(json.dumps({"items": self.pods.get(args[3], [])}))
         if args[0] == "get" and args[1] == "events":
@@ -116,6 +119,7 @@ def kube(monkeypatch):
     fake = FakeKubectl()
     monkeypatch.setattr(hermes_verifier, "_kubectl", fake)
     monkeypatch.setattr(hermes_verifier, "HERMES_VERIFY_ENABLED", False)
+    monkeypatch.setattr(hermes_verifier, "ROLLOUT_TIMEOUT", 0)  # Pod chưa Ready => kết luận ngay, không chờ
     return fake
 
 

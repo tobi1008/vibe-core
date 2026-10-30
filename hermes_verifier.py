@@ -13,6 +13,7 @@ Hermes chỉ giải thích nguyên nhân và gợi ý cách sửa.
 
 import json
 import os
+import re
 import subprocess
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -21,14 +22,16 @@ import builder_core
 from builder_core import K8S_NAMESPACE, run_hermes_json
 from security import redact_secrets
 
-ROLLOUT_TIMEOUT = int(os.getenv("VERIFY_ROLLOUT_TIMEOUT", "180"))
+# Image Next.js/Node có thể vài trăm MB tới hơn 1GB, lần đầu K3s kéo image mất vài phút
+ROLLOUT_TIMEOUT = int(os.getenv("VERIFY_ROLLOUT_TIMEOUT", "600"))
+ROLLOUT_POLL_SECONDS = 15
 HERMES_VERIFY_ENABLED = os.getenv("HERMES_VERIFY", "1") != "0"
 HERMES_VERIFY_TIMEOUT = int(os.getenv("HERMES_VERIFY_TIMEOUT", "45"))
 HERMES_VERIFY_MAX_MODELS = 3
 
 STATUS_LABELS = {
     "healthy": "✅ Hoạt động ổn định",
-    "starting": "⏳ Pod chưa sẵn sàng",
+    "starting": "⏳ Pod chưa sẵn sàng (đang kéo image / khởi động)",
     "pipeline_error": "❌ Lỗi trong quá trình build / triển khai",
     "build_error": "❌ Lỗi build mã nguồn",
     "code_error": "❌ Lỗi mã nguồn (container crash khi chạy)",
@@ -43,6 +46,15 @@ K8S_CONFIG_REASONS = {
 }
 # Container đã chạy nhưng tự thoát => thường do mã nguồn hoặc biến môi trường của ứng dụng
 APP_CRASH_REASONS = {"CrashLoopBackOff", "Error", "OOMKilled", "RunContainerError"}
+# Gặp các lý do này thì chờ thêm cũng vô ích => dừng chờ rollout sớm
+FAIL_FAST_REASONS = K8S_CONFIG_REASONS | {"CrashLoopBackOff", "RunContainerError"}
+
+# Kết luận Hermes được phép đưa ra: build/pipeline chỉ hợp lệ khi pipeline thực sự báo lỗi
+ALLOWED_AI_STATUS_ON_ERROR = {"build_error", "pipeline_error", "k8s_config_error", "code_error"}
+ALLOWED_AI_STATUS_AFTER_APPLY = {"code_error", "k8s_config_error", "starting"}
+
+# Dòng tiến trình docker push/pull ("4c134b02cb7e: Waiting") chỉ gây nhiễu cho Hermes
+_LAYER_PROGRESS_LINE = re.compile(r"^\s*[0-9a-f]{12}: ")
 
 
 def _kubectl(args: List[str], timeout: int = 30) -> subprocess.CompletedProcess:
@@ -78,9 +90,35 @@ def discover_workloads(app_name: str) -> List[str]:
     return sorted(found, key=lambda w: not w.startswith("statefulset/"))
 
 
+def blocking_reasons(info: Dict[str, Any]) -> set:
+    """Các lỗi chắc chắn khiến Pod không thể Ready (không phải trạng thái đang khởi động)"""
+    if not info["found"]:
+        return {"NotFound"}
+    return {
+        c["reason"]
+        for p in info.get("pods", [])
+        for c in p["containers"]
+        if c.get("state") == "waiting" and c.get("reason") in FAIL_FAST_REASONS
+    }
+
+
 def wait_for_rollout(workload: str) -> Dict[str, Any]:
-    res = _kubectl(["rollout", "status", workload, f"--timeout={ROLLOUT_TIMEOUT}s"], timeout=ROLLOUT_TIMEOUT + 15)
-    return {"ready": res.returncode == 0, "message": (res.stdout or res.stderr).strip()[-300:]}
+    """
+    Chờ rollout hoàn tất. Pod còn ContainerCreating (đang kéo image) thì chờ tiếp tới ROLLOUT_TIMEOUT,
+    gặp lỗi chắc chắn (ImagePullBackOff, CrashLoopBackOff, không tồn tại...) thì dừng ngay.
+    """
+    deadline = time.time() + ROLLOUT_TIMEOUT
+    while True:
+        step = max(1, min(ROLLOUT_POLL_SECONDS, int(deadline - time.time())))
+        res = _kubectl(["rollout", "status", workload, f"--timeout={step}s"], timeout=step + 15)
+        if res.returncode == 0:
+            return {"ready": True, "message": res.stdout.strip()[-300:]}
+
+        reasons = blocking_reasons(collect_workload(workload, with_logs=False))
+        if reasons:
+            return {"ready": False, "message": f"Dừng chờ vì: {', '.join(sorted(reasons))}"}
+        if time.time() >= deadline:
+            return {"ready": False, "message": f"Hết {ROLLOUT_TIMEOUT}s mà Pod vẫn chưa Ready. {res.stderr.strip()[-200:]}"}
 
 
 def _container_states(pod: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -109,7 +147,7 @@ def _container_states(pod: Dict[str, Any]) -> List[Dict[str, Any]]:
     return states
 
 
-def collect_workload(workload: str) -> Dict[str, Any]:
+def collect_workload(workload: str, with_logs: bool = True) -> Dict[str, Any]:
     info: Dict[str, Any] = {"workload": workload, "found": False}
     res = _kubectl(["get", workload, "-o", "json"])
     if res.returncode != 0:
@@ -149,7 +187,7 @@ def collect_workload(workload: str) -> Dict[str, Any]:
 
     # Log của Pod có vấn đề (hoặc Pod đầu tiên) để Hermes đọc được stack trace
     target = next((p for p in pods if any(not c["ready"] for c in p["containers"])), pods[0] if pods else None)
-    if target:
+    if target and with_logs:
         logs = _kubectl(["logs", target["name"], "--all-containers", "--tail=60"]).stdout
         if any(c["restarts"] for c in target["containers"]):
             prev = _kubectl(["logs", target["name"], "--all-containers", "--previous", "--tail=60"]).stdout
@@ -168,7 +206,8 @@ def collect_events(names: List[str]) -> str:
 def read_build_log_tail(app_name: str, max_lines: int = 80) -> str:
     try:
         with open(os.path.join(builder_core.LOGS_DIR, f"{app_name}.log"), "r", encoding="utf-8") as f:
-            return "".join(f.readlines()[-max_lines:])
+            lines = [line for line in f.readlines() if not _LAYER_PROGRESS_LINE.match(line)]
+        return "".join(lines[-max_lines:])
     except Exception:
         return ""
 
@@ -203,16 +242,22 @@ def classify(snapshot: List[Dict[str, Any]], error: Optional[str]) -> str:
 
 def ask_hermes(app_name: str, snapshot: List[Dict[str, Any]], events: str, build_log: str,
                error: Optional[str], ready: bool, fallback_status: str) -> Optional[Dict[str, Any]]:
+    allowed = ALLOWED_AI_STATUS_ON_ERROR if error else ALLOWED_AI_STATUS_AFTER_APPLY | {"healthy"}
     prompt = f"""
 Bạn là Hermes - AI Agent kiểm tra tổng thể (read-only) của nền tảng Vibe Hosting (K3s + Nixpacks).
 Cấu hình đã được AI khác viết và áp dụng. Nhiệm vụ của bạn CHỈ LÀ QUAN SÁT VÀ ĐÁNH GIÁ, không đề xuất lệnh để hệ thống tự chạy.
 
-Hãy trả lời: ứng dụng "{app_name}" đã triển khai thành công chưa? Nếu chưa, lỗi nằm ở tầng nào:
+Hãy trả lời: ứng dụng "{app_name}" đã triển khai thành công chưa? Nếu chưa, lỗi nằm ở tầng nào.
+Chỉ được chọn "status" trong danh sách sau: {", ".join(sorted(allowed))}
 - "build_error": lỗi khi build image (cài thư viện, compile, nixpacks)
-- "code_error": container đã chạy nhưng crash do mã nguồn / thiếu biến môi trường của ứng dụng
-- "k8s_config_error": cấu hình K3s khiến Pod không start (image, port, probe, secret, volume, ingress, tài nguyên)
 - "pipeline_error": lỗi hạ tầng của pipeline (git clone, docker push, kubectl apply...)
+- "code_error": container đã chạy nhưng crash do mã nguồn / thiếu biến môi trường của ứng dụng
+- "k8s_config_error": cấu hình K3s khiến Pod không start (image không kéo được, port, probe, secret, volume, tài nguyên)
+- "starting": Pod đang ContainerCreating / PodInitializing (đang kéo image, khởi động) và CHƯA có dấu hiệu lỗi nào. Đây KHÔNG phải lỗi.
 - "healthy": mọi Pod đã Ready
+
+{"Pipeline báo lỗi ở trên, hãy xác định nguyên nhân từ log build." if error else "Image ĐÃ build và push thành công, manifest đã apply thành công. Tuyệt đối không kết luận lỗi build. Chỉ đánh giá trạng thái Pod."}
+Chỉ dựa vào bằng chứng có trong dữ liệu bên dưới, không suy đoán.
 
 [KẾT QUẢ KIỂM TRA TỰ ĐỘNG]
 Lỗi pipeline: {error or "Không có"}
@@ -230,7 +275,7 @@ Phân loại sơ bộ: {fallback_status}
 
 BẮT BUỘC chỉ trả về JSON thuần, viết bằng tiếng Việt:
 {{
-  "status": "healthy | build_error | code_error | k8s_config_error | pipeline_error",
+  "status": "một trong: {" | ".join(sorted(allowed))}",
   "summary": "Kết luận 1-2 câu cho người dùng",
   "evidence": ["Dòng log / trạng thái cụ thể chứng minh kết luận"],
   "suggestions": ["Việc người dùng nên làm để sửa (để trống nếu healthy)"]
@@ -270,7 +315,7 @@ def verify_deployment(app_name: str, workloads: List[str], error: Optional[str] 
     status = fallback_status
     if ready:
         status = "healthy"
-    elif ai and ai.get("status") in STATUS_LABELS and ai.get("status") != "healthy":
+    elif ai and ai.get("status") in (ALLOWED_AI_STATUS_ON_ERROR if error else ALLOWED_AI_STATUS_AFTER_APPLY):
         status = ai["status"]
     elif status == "healthy":
         status = "starting"
