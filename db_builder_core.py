@@ -14,6 +14,8 @@ try:
 except ImportError:
     yaml = None
 
+from security import safe_join
+from hermes_verifier import finalize_pipeline
 from builder_core import write_log, run_cmd, DOCKER_USER, BASE_WORKSPACE, K8S_NAMESPACE, HERMES_API_URL, HEADERS, FALLBACK_MODELS
 
 def generate_db_password(length=12):
@@ -721,7 +723,10 @@ TRẢ VỀ DUY NHẤT ĐỐI TƯỢNG JSON (Không Markdown):
         if "files_to_update" in ai_data and ai_data["files_to_update"]:
             for file_data in ai_data["files_to_update"]:
                 raw_path = file_data['path'].lstrip('/')
-                file_path = os.path.join(workspace_dir, raw_path)
+                file_path = safe_join(workspace_dir, raw_path)
+                if not file_path:
+                    write_log(app_name, f"   ⛔ Bỏ qua file ngoài workspace do AI đề xuất: {raw_path}")
+                    continue
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 final_content = file_data["content"]
                 if raw_path.endswith(('.properties', '.env')) and os.path.exists(file_path):
@@ -801,7 +806,8 @@ API_URL={backend_url}
 def deploy_app_with_db(repo_url: str, app_name: str, app_domain: str, db_type: str, backup_file_path: str = "", ai_provider: str = "agy"):
     write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI] {app_name} ({db_type.upper()}) (AI Engine: {ai_provider.upper()}) ===")
     WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
-    
+    workloads = [f"statefulset/{app_name}-db", f"deployment/{app_name}"]
+
     try:
         write_log(app_name, "[0] Đang kéo mã nguồn từ GitHub...")
         if os.path.exists(WORKSPACE_DIR):
@@ -875,19 +881,21 @@ def deploy_app_with_db(repo_url: str, app_name: str, app_domain: str, db_type: s
         run_cmd(["kubectl", "apply", "-f", "k8s/service.yaml"], app_name, cwd=WORKSPACE_DIR)
         run_cmd(["kubectl", "apply", "-f", "k8s/ingress.yaml"], app_name, cwd=WORKSPACE_DIR)
         
-        write_log(app_name, f"\n=== HOÀN TẤT TRIỂN KHAI ===")
-        write_log(app_name, f"Web App đang chạy tại: https://{app_domain}")
-        write_log(app_name, "DONE")
-        
+        finalize_pipeline(app_name, workloads, success_lines=[
+            "\n=== HOÀN TẤT TRIỂN KHAI ===",
+            f"Web App đang chạy tại: https://{app_domain}",
+        ])
+
     except Exception as e:
         write_log(app_name, f"\n[LỖI NGHIÊM TRỌNG] {e}")
-        write_log(app_name, "ERROR")
+        finalize_pipeline(app_name, workloads, error=str(e))
 
 # --- 2. LUỒNG DEPLOY FULLSTACK (2 REPO: FE + BE + DATABASE CHUNG) ---
 def deploy_fullstack_app(app_name: str, be_repo_url: str, be_domain: str, fe_repo_url: str, fe_domain: str, db_type: str, backup_file_path: str = "", ai_provider: str = "agy"):
     write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI FULLSTACK] {app_name} (AI Engine: {ai_provider.upper()}) ===")
     BE_APP_NAME = f"{app_name}-be"
     FE_APP_NAME = f"{app_name}-fe"
+    workloads = [f"statefulset/{app_name}-db", f"deployment/{BE_APP_NAME}", f"deployment/{FE_APP_NAME}"]
     
     BE_WORKSPACE = f"{BASE_WORKSPACE}/{BE_APP_NAME}"
     FE_WORKSPACE = f"{BASE_WORKSPACE}/{FE_APP_NAME}"
@@ -978,14 +986,15 @@ def deploy_fullstack_app(app_name: str, be_repo_url: str, be_domain: str, fe_rep
         run_cmd(["kubectl", "apply", "-f", f"{fe_k8s}/ingress.yaml"], app_name)
         write_log(app_name, f"✅ Frontend đã online tại: https://{fe_domain}")
 
-        write_log(app_name, f"\n=== HOÀN TẤT TRIỂN KHAI CỤM FULLSTACK ===")
-        write_log(app_name, f"Frontend: https://{fe_domain}")
-        write_log(app_name, f"Backend : https://{be_domain}")
-        write_log(app_name, "DONE")
+        finalize_pipeline(app_name, workloads, success_lines=[
+            "\n=== HOÀN TẤT TRIỂN KHAI CỤM FULLSTACK ===",
+            f"Frontend: https://{fe_domain}",
+            f"Backend : https://{be_domain}",
+        ])
 
     except Exception as e:
         write_log(app_name, f"\n[LỖI NGHIÊM TRỌNG FULLSTACK] {e}")
-        write_log(app_name, "ERROR")
+        finalize_pipeline(app_name, workloads, error=str(e))
 
 # --- HÀM DỌN DẸP SẠCH SẼ CẢ CỤM ---
 def delete_app_db_resources(app_name: str):

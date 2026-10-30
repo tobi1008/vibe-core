@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from security import redact_secrets
+from security import redact_secrets, safe_join
+from hermes_verifier import finalize_pipeline
 from builder_core import (
     K8S_NAMESPACE,
     DOCKER_USER,
@@ -232,6 +233,7 @@ def deploy_archive_app(archive_path: str, app_name: str, app_domain: str, ai_pro
     Tích hợp AI Engine (Antigravity hoặc Hermes) sinh cấu hình và tự phục hồi.
     Bọc toàn bộ task trong try...except và stream log thời gian thực.
     """
+    workloads = [f"deployment/{app_name}"]
     try:
         write_log(app_name, f"\n=== [BẮT ĐẦU DEPLOY TỪ FILE NÉN] {app_name} (AI Engine: {ai_provider.upper()}) ===")
 
@@ -378,8 +380,12 @@ QUY ĐỊNH "user_action_required" (CỰC KỲ QUAN TRỌNG):
                 f_name = patch.get("file_name")
                 f_content = patch.get("new_content")
                 if f_name and f_content:
+                    patch_path = safe_join(WORKSPACE_DIR, f_name)
+                    if not patch_path:
+                        write_log(app_name, f" ⛔ [AUTO-HEAL] Bỏ qua bản vá ngoài workspace: {f_name}")
+                        continue
                     write_log(app_name, f" 🛠️ [AUTO-HEAL] AI đang tự động vá lỗi file cấu hình: {f_name}...")
-                    patch_path = os.path.join(WORKSPACE_DIR, f_name)
+                    os.makedirs(os.path.dirname(patch_path), exist_ok=True)
                     with open(patch_path, "w", encoding="utf-8") as pf:
                         pf.write(f_content)
 
@@ -422,16 +428,17 @@ QUY ĐỊNH "user_action_required" (CỰC KỲ QUAN TRỌNG):
         run_cmd(["kubectl", "apply", "-f", "k8s/service.yaml"], app_name, cwd=WORKSPACE_DIR)
         run_cmd(["kubectl", "apply", "-f", "k8s/ingress.yaml"], app_name, cwd=WORKSPACE_DIR)
 
-        # Báo hiệu trạng thái hoàn tất cho Frontend
-        write_log(app_name, f"\n=== HOÀN TẤT TRIỂN KHAI ===")
-        write_log(app_name, f"=== [HOÀN TẤT] Ứng dụng từ file nén đã online tại https://{app_domain} ===")
-        write_log(app_name, "DONE")
+        # Hermes kiểm tra tổng thể rồi mới báo hiệu trạng thái hoàn tất cho Frontend
+        finalize_pipeline(app_name, workloads, log=write_log, success_lines=[
+            "\n=== HOÀN TẤT TRIỂN KHAI ===",
+            f"=== [HOÀN TẤT] Ứng dụng từ file nén đã online tại https://{app_domain} ===",
+        ])
 
     except Exception as e:
         err_trace = traceback.format_exc()
         write_log(app_name, f"\n❌ [ERROR] Lỗi trong quy trình deploy file nén: {str(e)}")
         write_log(app_name, f"[CHI TIẾT TRACEBACK]:\n{err_trace}")
-        write_log(app_name, "ERROR")
+        finalize_pipeline(app_name, workloads, error=str(e), log=write_log)
 
 
 # ==============================================================================
@@ -572,6 +579,7 @@ def deploy_archive_with_db(
     Tự động liên kết DATABASE_URL và seed database nếu có file backup sql/json.
     Bọc toàn bộ task trong try...except và stream log thời gian thực.
     """
+    workloads = [f"statefulset/{app_name}-db", f"deployment/{app_name}"]
     try:
         write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI TỪ FILE NÉN CÓ DATABASE] {app_name} ({db_type.upper()}) (AI Engine: {ai_provider.upper()}) ===")
         WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
@@ -710,13 +718,14 @@ def deploy_archive_with_db(
         run_cmd(["kubectl", "apply", "-f", "k8s/service.yaml"], app_name, cwd=WORKSPACE_DIR)
         run_cmd(["kubectl", "apply", "-f", "k8s/ingress.yaml"], app_name, cwd=WORKSPACE_DIR)
 
-        # Báo hiệu trạng thái hoàn tất cho Frontend
-        write_log(app_name, f"\n=== HOÀN TẤT TRIỂN KHAI ===")
-        write_log(app_name, f"=== [HOÀN TẤT] Ứng dụng kèm DB đã online tại https://{app_domain} ===")
-        write_log(app_name, "DONE")
+        # Hermes kiểm tra tổng thể rồi mới báo hiệu trạng thái hoàn tất cho Frontend
+        finalize_pipeline(app_name, workloads, log=write_log, success_lines=[
+            "\n=== HOÀN TẤT TRIỂN KHAI ===",
+            f"=== [HOÀN TẤT] Ứng dụng kèm DB đã online tại https://{app_domain} ===",
+        ])
 
     except Exception as e:
         err_trace = traceback.format_exc()
         write_log(app_name, f"\n❌ [ERROR] Lỗi trong quá trình triển khai Archive + DB: {str(e)}")
         write_log(app_name, f"[CHI TIẾT TRACEBACK]:\n{err_trace}")
-        write_log(app_name, "ERROR")
+        finalize_pipeline(app_name, workloads, error=str(e), log=write_log)

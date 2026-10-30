@@ -4,9 +4,31 @@ on:
   push:
     branches:
       - main
+  pull_request:
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint (lỗi cú pháp & biến chưa định nghĩa)
+        run: ruff check --select E9,F63,F7,F82 .
+
+      - name: Unit tests
+        run: python -m pytest -q --cov=. --cov-report=term
+
   deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: SSH into VPS and trigger update script

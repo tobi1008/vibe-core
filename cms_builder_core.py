@@ -16,6 +16,7 @@ import time
 from typing import Optional
 
 from builder_core import write_log, run_cmd, DOCKER_USER, K8S_NAMESPACE, BASE_WORKSPACE
+from hermes_verifier import finalize_pipeline
 from db_builder_core import (
     generate_db_password,
     get_db_strategy,
@@ -222,6 +223,7 @@ def deploy_cms_app(
 
     write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI CMS / MÃ NGUỒN MỞ] {app_name} ({db_type.upper()}) (AI: {ai_provider.upper()}) ===")
     WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
+    workloads = [f"statefulset/{app_name}-db", f"deployment/{app_name}"]
 
     try:
         # [0] Kéo mã nguồn từ GitHub
@@ -324,11 +326,12 @@ def deploy_cms_app(
         run_cmd(["kubectl", "apply", "-f", "k8s/service.yaml"], app_name, cwd=WORKSPACE_DIR)
         run_cmd(["kubectl", "apply", "-f", "k8s/ingress.yaml"], app_name, cwd=WORKSPACE_DIR)
 
-        write_log(app_name, f"\n=== HOÀN TẤT TRIỂN KHAI CMS / OPEN-SOURCE ===")
-        write_log(app_name, f"🌐 Truy cập ứng dụng: https://{app_domain}")
-        write_log(app_name, f"🗄️ Database ({db_type.upper()}): {db_info['host']} (DB: {db_name}, User: {db_info['user']})")
-        write_log(app_name, "DONE")
+        finalize_pipeline(app_name, workloads, success_lines=[
+            "\n=== HOÀN TẤT TRIỂN KHAI CMS / OPEN-SOURCE ===",
+            f"🌐 Truy cập ứng dụng: https://{app_domain}",
+            f"🗄️ Database ({db_type.upper()}): {db_info['host']} (DB: {db_name}, User: {db_info['user']})",
+        ])
 
     except Exception as e:
         write_log(app_name, f"\n[LỖI NGHIÊM TRỌNG CMS DEPLOY] {e}")
-        write_log(app_name, "ERROR")
+        finalize_pipeline(app_name, workloads, error=str(e))

@@ -8,11 +8,12 @@ from fastapi import FastAPI, BackgroundTasks, Request, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from builder_core import deploy_app, delete_app, BASE_WORKSPACE, K8S_NAMESPACE
+from builder_core import deploy_app, delete_app, normalize_config_engine, BASE_WORKSPACE, K8S_NAMESPACE
 from archive_builder_core import deploy_archive_app, deploy_archive_with_db, UPLOAD_DIR
 from cicd_core import redeploy_app
 from db_builder_core import deploy_app_with_db, deploy_fullstack_app, delete_app_db_resources
 from monorepo_builder_core import deploy_monorepo_app
+from hermes_verifier import verify_deployment, discover_workloads, load_report
 from security import require_api_key, validate_app_name, validate_repo_url, verify_github_signature, redact_secrets, safe_upload_filename
 try:
     from cms_builder_core import deploy_cms_app
@@ -60,7 +61,11 @@ if hermes_agent_router:
 
 @app.get("/api/ai-providers")
 def get_ai_providers():
-    """Trả về danh sách AI Engines được hỗ trợ trên hệ thống (Antigravity, Claude Code & Hermes)"""
+    """
+    Trả về các AI Engine của hệ thống:
+    - providers: engine viết cấu hình Nixpacks / K3s (Antigravity, Claude Code)
+    - verifier : Hermes Agent kiểm tra tổng thể ở bước cuối pipeline
+    """
     from builder_core import AGY_MODELS, HERMES_MODELS, CLAUDE_MODELS
     return {
         "status": "success",
@@ -70,24 +75,24 @@ def get_ai_providers():
                 "id": "agy",
                 "name": "Google Antigravity (Gemini 3.8 Flash)",
                 "badge": "Khuyên dùng - Nhanh (5-15s)",
-                "description": "Thực thi CLI trực tiếp trên VPS, tự động dự phòng 3 tầng Gemini 3.8 Flash (Low / Medium / High)",
+                "description": "Viết cấu hình Nixpacks & K3s bằng CLI trực tiếp trên VPS, tự động dự phòng 3 tầng Gemini 3.8 Flash (Low / Medium / High)",
                 "models": AGY_MODELS
             },
             {
                 "id": "claude",
                 "name": "Claude Code (Anthropic Opus/Sonnet)",
                 "badge": "Trí tuệ cao cấp (Opus 5.5)",
-                "description": "Thực thi Claude Code CLI trực tiếp trên VPS với Opus 5.5, Sonnet 5.5, Haiku 5.5",
+                "description": "Viết cấu hình Nixpacks & K3s bằng Claude Code CLI trên VPS với Opus 5.5, Sonnet 5.5, Haiku 5.5",
                 "models": CLAUDE_MODELS
-            },
-            {
-                "id": "hermes",
-                "name": "Hermes Agent (Open-Source LLMs)",
-                "badge": "Mô hình mã nguồn mở",
-                "description": "Bộ não suy luận Hermes qua API Gateway (Solar, Longcat, Laguna, Step, Beam, Ornith)",
-                "models": HERMES_MODELS
             }
-        ]
+        ],
+        "verifier": {
+            "id": "hermes",
+            "name": "Hermes Agent (Open-Source LLMs)",
+            "badge": "Kiểm tra sau triển khai",
+            "description": "Tự động chạy ở bước cuối mỗi lần Deploy / CI-CD: kiểm tra Pod, sự kiện K3s và log để kết luận ứng dụng chạy ổn định hay lỗi ở mã nguồn / cấu hình K3s",
+            "models": HERMES_MODELS
+        }
     }
 
 @app.get("/api/open-source-templates")
@@ -224,7 +229,7 @@ async def trigger_deploy(req: DeployRequest, background_tasks: BackgroundTasks):
     validate_repo_url(req.repo_url)
     final_url = prepare_repo_url(req.repo_url, req.github_token)
     owner = resolve_github_owner_from_token(req.github_token)
-    ai_engine = (req.ai_provider or "agy").lower().strip()
+    ai_engine = normalize_config_engine(req.ai_provider)
 
     with open(f"{LOG_DIR}/{req.app_name}.log", "w", encoding="utf-8") as f:
         f.write(f"🚀 [INIT] Bắt đầu quy trình Deploy Web: {req.app_name} ({req.app_domain}) - AI: {ai_engine.upper()}...\n")
@@ -258,7 +263,7 @@ async def trigger_deploy_open_source(req: OpenSourceDeployRequest, background_ta
         detected_cms = cms_type if cms_type else "custom"
 
     owner = resolve_github_owner_from_token(req.github_token)
-    ai_engine = (req.ai_provider or "agy").lower().strip()
+    ai_engine = normalize_config_engine(req.ai_provider)
     db_type = (req.db_type or "mysql").lower().strip()
 
     with open(f"{LOG_DIR}/{req.app_name}.log", "w", encoding="utf-8") as f:
@@ -308,7 +313,7 @@ async def trigger_deploy_db(
     validate_repo_url(repo_url)
     final_url = prepare_repo_url(repo_url, github_token)
     owner = resolve_github_owner_from_token(github_token)
-    ai_engine = (ai_provider or "agy").lower().strip()
+    ai_engine = normalize_config_engine(ai_provider)
     saved_backup_path = ""
     if backup_file and backup_file.filename:
         safe_filename = safe_upload_filename(backup_file.filename)
@@ -346,7 +351,7 @@ async def trigger_deploy_archive(
     validate_app_name(app_name)
     safe_filename = safe_upload_filename(archive_file.filename)
     saved_archive_path = f"{UPLOAD_DIR}/{app_name}_{safe_filename}"
-    ai_engine = (ai_provider or "agy").lower().strip()
+    ai_engine = normalize_config_engine(ai_provider)
     try:
         with open(saved_archive_path, "wb") as buffer:
             shutil.copyfileobj(archive_file.file, buffer)
@@ -385,7 +390,7 @@ async def trigger_deploy_archive_with_db(
     validate_app_name(app_name)
     safe_filename = safe_upload_filename(archive_file.filename)
     saved_archive_path = f"{UPLOAD_DIR}/{app_name}_{safe_filename}"
-    ai_engine = (ai_provider or "agy").lower().strip()
+    ai_engine = normalize_config_engine(ai_provider)
     try:
         with open(saved_archive_path, "wb") as buffer:
             shutil.copyfileobj(archive_file.file, buffer)
@@ -451,7 +456,7 @@ async def trigger_deploy_fullstack(
     final_be_url = prepare_repo_url(be_repo_url, github_token)
     final_fe_url = prepare_repo_url(fe_repo_url, github_token)
     owner = resolve_github_owner_from_token(github_token)
-    ai_engine = (ai_provider or "agy").lower().strip()
+    ai_engine = normalize_config_engine(ai_provider)
 
     saved_backup_path = ""
     if backup_file and backup_file.filename:
@@ -499,7 +504,7 @@ async def trigger_deploy_monorepo(req: MonorepoDeployRequest, background_tasks: 
     final_url = prepare_repo_url(req.repo_url, req.github_token)
     owner = resolve_github_owner_from_token(req.github_token)
 
-    ai_engine = (req.ai_provider or "agy").lower().strip()
+    ai_engine = normalize_config_engine(req.ai_provider)
     with open(f"{LOG_DIR}/{req.app_name}.log", "w", encoding="utf-8") as f:
         f.write(f"🚀 [INIT] Tiếp nhận Monorepo Open Source: {req.app_name} (AI: {ai_engine.upper()})\n"
                 f"   - Repository : {req.repo_url}\n"
@@ -596,9 +601,9 @@ def purge_app_workspace_and_configs(app_name: str):
 
     # 4. Xóa log build cũ để chuẩn bị môi trường sạch
     try:
-        log_path = f"{LOG_DIR}/{app_name}.log"
-        if os.path.exists(log_path):
-            os.remove(log_path)
+        for log_path in (f"{LOG_DIR}/{app_name}.log", f"{LOG_DIR}/{app_name}.health.json"):
+            if os.path.exists(log_path):
+                os.remove(log_path)
     except Exception:
         pass
 
@@ -710,6 +715,25 @@ async def github_webhook(app_name: str, request: Request, background_tasks: Back
         return {"status": "success", "message": f"CI/CD Pipeline đã kích hoạt cho [{app_name}]"}
 
     return {"status": "ignored", "message": "Không có push code mới."}
+
+@app.get("/api/apps/{app_name}/health-report")
+def get_health_report(app_name: str):
+    """Báo cáo kiểm tra tổng thể gần nhất của Hermes Verifier"""
+    report = load_report(app_name)
+    if not report:
+        return {"status": "none", "message": f"Chưa có báo cáo kiểm tra cho {app_name}."}
+    return {"status": "success", "report": report}
+
+
+@app.post("/api/apps/{app_name}/verify")
+def trigger_health_check(app_name: str, background_tasks: BackgroundTasks):
+    """Yêu cầu Hermes kiểm tra lại ứng dụng đang chạy (không ghi vào log build, xem kết quả qua /health-report)"""
+    workloads = discover_workloads(app_name)
+    if not workloads:
+        raise HTTPException(status_code=404, detail=f"Không tìm thấy Deployment/StatefulSet nào của {app_name} trên K3s.")
+    background_tasks.add_task(verify_deployment, app_name, workloads)
+    return {"status": "success", "message": f"Hermes đang kiểm tra {len(workloads)} workload của {app_name}.", "workloads": workloads}
+
 
 @app.get("/api/apps/{app_name}/history")
 def get_app_rollout_history(app_name: str, component: Optional[str] = Query(None)):

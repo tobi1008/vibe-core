@@ -21,6 +21,8 @@ except ImportError:
     auto_patch_nodejs_esm_conflicts = None
     link_frontend_to_backend = None
 
+from hermes_verifier import finalize_pipeline
+
 try:
     from builder_core import K8S_NAMESPACE
 except ImportError:
@@ -309,7 +311,29 @@ def redeploy_app(
     Quy trình CI/CD ưu tiên tuyệt đối mã nguồn từ tài khoản kết nối qua Token:
     - Tự động nhận diện tài khoản GitHub sở hữu token từ Remote Origin hiện tại hoặc apps_config.json.
     - Chặn các Webhook từ repo của tác giả cũ để bảo vệ mã nguồn cá nhân hóa của người dùng.
+    - Kết thúc bằng Hermes Verifier: chỉ ghi DONE khi Pod mới thực sự Ready, mọi lỗi đều ghi ERROR.
     """
+    workloads: list = []
+    try:
+        triggered = _run_redeploy(app_name, branch, triggered_repo_url, pull_git, target_component, workloads)
+    except Exception as e:
+        write_log(app_name, f"❌ [LỖI CI/CD] {e}")
+        finalize_pipeline(app_name, workloads, error=str(e))
+        raise
+
+    if triggered:
+        finalize_pipeline(app_name, workloads, success_lines=[f"=== [HOÀN TẤT CI/CD] {app_name} ==="])
+
+
+def _run_redeploy(
+    app_name: str,
+    branch: str,
+    triggered_repo_url: Optional[str],
+    pull_git: bool,
+    target_component: Optional[str],
+    workloads: list
+) -> bool:
+    """Thực hiện rebuild, ghi nhận các Deployment đã cập nhật vào `workloads`. Trả về False nếu bỏ qua webhook."""
     comp_label = f" | Component: {target_component.upper()}" if target_component else ""
     write_log(app_name, f"\n=== [BẮT ĐẦU CI/CD REDEPLOY] {app_name} (Nhánh: {branch}{comp_label} | Pull Git: {pull_git}) ===")
 
@@ -321,6 +345,18 @@ def redeploy_app(
     triggered_clean = get_clean_git_url(triggered_repo_url) if triggered_repo_url else None
     norm_comp = (target_component or "").lower().strip()
     app_cfg = get_active_app_config(app_name)
+
+    def rebuild(component_name: str, target_dir: str, deploy_name: str, image_base: str):
+        workloads.append(f"deployment/{deploy_name}")
+        update_and_rebuild_component(
+            app_name=app_name,
+            component_name=component_name,
+            target_dir=target_dir,
+            branch=branch,
+            deploy_name=deploy_name,
+            image_base=image_base,
+            pull_git=pull_git
+        )
 
     # 1. NHẬN DIỆN CHỦ TÀI KHOẢN ĐANG KẾT NỐI (TỪ CONFIG HOẶC TRỰC TIẾP TỪ GIT ORIGIN HIỆN TẠI)
     active_token_owner = (app_cfg.get("primary_github_owner") or "").lower()
@@ -344,11 +380,11 @@ def redeploy_app(
                 f"vì ứng dụng đang được liên kết và ưu tiên theo tài khoản của token: [{active_token_owner}]."
             )
             write_log(app_name, "DONE")
-            return
+            return False
 
     # TRƯỜNG HỢP 1: FULLSTACK 2-REPO
     if os.path.exists(ws_be) or os.path.exists(ws_fe):
-        write_log(app_name, f"🔍 Phát hiện cấu trúc Fullstack 2 Repositories riêng biệt.")
+        write_log(app_name, "🔍 Phát hiện cấu trúc Fullstack 2 Repositories riêng biệt.")
         rebuilt_any = False
 
         # Build Backend
@@ -362,15 +398,7 @@ def redeploy_app(
             )
 
             if should_rebuild_be:
-                update_and_rebuild_component(
-                    app_name=app_name,
-                    component_name="backend",
-                    target_dir=ws_be,
-                    branch=branch,
-                    deploy_name=f"{app_name}-be",
-                    image_base=f"{DOCKER_USER}/{app_name}-be",
-                    pull_git=pull_git
-                )
+                rebuild("backend", ws_be, f"{app_name}-be", f"{DOCKER_USER}/{app_name}-be")
                 rebuilt_any = True
 
         # Build Frontend
@@ -384,27 +412,18 @@ def redeploy_app(
             )
 
             if should_rebuild_fe:
-                update_and_rebuild_component(
-                    app_name=app_name,
-                    component_name="frontend",
-                    target_dir=ws_fe,
-                    branch=branch,
-                    deploy_name=f"{app_name}-fe",
-                    image_base=f"{DOCKER_USER}/{app_name}-fe",
-                    pull_git=pull_git
-                )
+                rebuild("frontend", ws_fe, f"{app_name}-fe", f"{DOCKER_USER}/{app_name}-fe")
                 rebuilt_any = True
 
         if not rebuilt_any:
-            write_log(app_name, f"ℹ️ Tiến hành cập nhật toàn bộ các component.")
+            write_log(app_name, "ℹ️ Tiến hành cập nhật toàn bộ các component.")
             if os.path.exists(ws_be):
-                update_and_rebuild_component(app_name, "backend", ws_be, branch, f"{app_name}-be", f"{DOCKER_USER}/{app_name}-be", pull_git)
+                rebuild("backend", ws_be, f"{app_name}-be", f"{DOCKER_USER}/{app_name}-be")
             if os.path.exists(ws_fe):
-                update_and_rebuild_component(app_name, "frontend", ws_fe, branch, f"{app_name}-fe", f"{DOCKER_USER}/{app_name}-fe", pull_git)
+                rebuild("frontend", ws_fe, f"{app_name}-fe", f"{DOCKER_USER}/{app_name}-fe")
 
-        write_log(app_name, f"=== [HOÀN TẤT CI/CD FULLSTACK] {app_name} ===")
-        write_log(app_name, "DONE")
-        return
+        write_log(app_name, f"=== [HOÀN TẤT BUILD CI/CD FULLSTACK] {app_name} ===")
+        return True
 
     # TRƯỜNG HỢP 2: MONOREPO
     elif os.path.exists(ws_mono):
@@ -420,42 +439,28 @@ def redeploy_app(
         for candidate in ["backend", "server", "api", "be"]:
             sub_be = os.path.join(ws_mono, candidate)
             if os.path.exists(sub_be) and os.path.isdir(sub_be) and norm_comp not in ["fe", "frontend"]:
-                update_and_rebuild_component(app_name, "backend", sub_be, branch, f"{app_name}-be", f"{DOCKER_USER}/{app_name}-be", pull_git)
+                rebuild("backend", sub_be, f"{app_name}-be", f"{DOCKER_USER}/{app_name}-be")
                 rebuilt_sub = True
                 break
 
         for candidate in ["frontend", "client", "web", "fe"]:
             sub_fe = os.path.join(ws_mono, candidate)
             if os.path.exists(sub_fe) and os.path.isdir(sub_fe) and norm_comp not in ["be", "backend"]:
-                update_and_rebuild_component(app_name, "frontend", sub_fe, branch, f"{app_name}-fe", f"{DOCKER_USER}/{app_name}-fe", pull_git)
+                rebuild("frontend", sub_fe, f"{app_name}-fe", f"{DOCKER_USER}/{app_name}-fe")
                 rebuilt_sub = True
                 break
 
         if not rebuilt_sub:
-            update_and_rebuild_component(app_name, "monorepo-root", ws_mono, branch, app_name, f"{DOCKER_USER}/{app_name}", pull_git)
+            rebuild("monorepo-root", ws_mono, app_name, f"{DOCKER_USER}/{app_name}")
 
-        write_log(app_name, f"=== [HOÀN TẤT CI/CD MONOREPO] {app_name} ===")
-        write_log(app_name, "DONE")
-        return
+        write_log(app_name, f"=== [HOÀN TẤT BUILD CI/CD MONOREPO] {app_name} ===")
+        return True
 
     # TRƯỜNG HỢP 3: SINGLE REPO
     elif os.path.exists(ws_single):
         write_log(app_name, f"🔍 Phát hiện cấu trúc Single Repo ({ws_single}).")
-        update_and_rebuild_component(
-            app_name=app_name,
-            component_name="app",
-            target_dir=ws_single,
-            branch=branch,
-            deploy_name=app_name,
-            image_base=f"{DOCKER_USER}/{app_name}",
-            pull_git=pull_git
-        )
-        write_log(app_name, f"=== [HOÀN TẤT CI/CD SINGLE REPO] {app_name} ===")
-        write_log(app_name, "DONE")
-        return
+        rebuild("app", ws_single, app_name, f"{DOCKER_USER}/{app_name}")
+        write_log(app_name, f"=== [HOÀN TẤT BUILD CI/CD SINGLE REPO] {app_name} ===")
+        return True
 
-    else:
-        err_msg = f"❌ [LỖI CI/CD] Không tìm thấy thư mục workspace cho '{app_name}'."
-        write_log(app_name, err_msg)
-        write_log(app_name, "ERROR")
-        raise FileNotFoundError(err_msg)
+    raise FileNotFoundError(f"Không tìm thấy thư mục workspace cho '{app_name}'.")

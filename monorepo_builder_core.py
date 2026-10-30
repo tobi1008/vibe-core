@@ -6,6 +6,7 @@ import re
 import secrets
 
 from builder_core import write_log, run_cmd, DOCKER_USER, BASE_WORKSPACE, K8S_NAMESPACE
+from hermes_verifier import finalize_pipeline
 from db_builder_core import (
     generate_db_password,
     get_db_strategy,
@@ -308,6 +309,7 @@ API_URL={be_api_url}
 def deploy_monorepo_app(repo_url: str, app_name: str, be_domain: str, fe_domain: str, db_type: str = "mysql", ai_provider: str = "agy"):
     write_log(app_name, f"\n=== [BẮT ĐẦU TRIỂN KHAI MONOREPO OPEN SOURCE] {app_name} ===")
     WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}-monorepo"
+    workloads = [f"statefulset/{app_name}-db", f"deployment/{app_name}-be"]
 
     try:
         # BƯỚC 1: CLONE REPO
@@ -494,13 +496,13 @@ cmd = "npm run start"
             run_cmd(["kubectl", "apply", "-f", f"{k8s_fe_dir}/service.yaml"], app_name)
             run_cmd(["kubectl", "apply", "-f", f"{k8s_fe_dir}/ingress.yaml"], app_name)
             write_log(app_name, f"✅ Frontend Monorepo online: https://{fe_domain}")
+            workloads.append(f"deployment/{app_name}-fe")
 
-        write_log(app_name, f"\n=== HOÀN TẤT TRIỂN KHAI MONOREPO ===")
-        write_log(app_name, f"Backend : https://{be_domain}")
+        success_lines = ["\n=== HOÀN TẤT TRIỂN KHAI MONOREPO ===", f"Backend : https://{be_domain}"]
         if fe_dir:
-            write_log(app_name, f"Frontend: https://{fe_domain}")
-        write_log(app_name, "DONE")
+            success_lines.append(f"Frontend: https://{fe_domain}")
+        finalize_pipeline(app_name, workloads, success_lines=success_lines)
 
     except Exception as e:
         write_log(app_name, f"\n[LỖI TRIỂN KHAI MONOREPO] {e}")
-        write_log(app_name, "ERROR")
+        finalize_pipeline(app_name, workloads, error=str(e))

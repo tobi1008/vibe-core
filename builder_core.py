@@ -9,7 +9,7 @@ import time
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
-from security import redact_secrets
+from security import redact_secrets, safe_join
 
 load_dotenv()
 
@@ -52,6 +52,18 @@ HERMES_MODELS = [
     "reflection/beam-1.0-501b-a23b:free",
     "ornith/ornith-1.5-122b:free",
 ]
+
+# Engine được phép viết cấu hình Nixpacks/K3s. Hermes không viết cấu hình mà đóng vai
+# AI Agent kiểm tra tổng thể ở bước cuối pipeline (xem hermes_verifier.py)
+CONFIG_AI_ENGINES = ("agy", "claude")
+
+
+def normalize_config_engine(provider: Optional[str]) -> str:
+    p = (provider or "agy").lower().strip()
+    if p in ["claude", "claude-code", "anthropic"]:
+        return "claude"
+    return "agy"
+
 
 def get_agy_bin() -> str:
     """Tự động tìm kiếm đường dẫn tuyệt đối của binary agy trên máy chủ"""
@@ -188,15 +200,17 @@ def run_agy_json(prompt: str, app_name: str = "system", cwd: Optional[str] = Non
         write_log(app_name, f"⚠️ [LỖI JSON AGY] Không thể parse JSON từ output của agy: {e}\nRaw Output: {raw_output[:300]}...")
         raise e
 
-def run_hermes_prompt(prompt: str, app_name: str = "system", timeout: int = 90, preferred_model: Optional[str] = None) -> str:
+def run_hermes_prompt(prompt: str, app_name: str = "system", timeout: int = 90, preferred_model: Optional[str] = None, max_models: Optional[int] = None) -> str:
     """
     Thực thi prompt thông qua Hermes API gateway (OpenAI-compatible HTTP endpoint).
-    Tự động fallback giữa các mô hình trong HERMES_MODELS.
+    Tự động fallback giữa các mô hình trong HERMES_MODELS (tối đa max_models model nếu có).
     """
     models_to_try = [preferred_model] if preferred_model and preferred_model in HERMES_MODELS else []
     for m in HERMES_MODELS:
         if m not in models_to_try:
             models_to_try.append(m)
+    if max_models:
+        models_to_try = models_to_try[:max_models]
 
     payload = {
         "messages": [
@@ -233,11 +247,11 @@ def run_hermes_prompt(prompt: str, app_name: str = "system", timeout: int = 90, 
 
     raise Exception(f"Tất cả các Model Hermes đều không phản hồi: {last_err}")
 
-def run_hermes_json(prompt: str, app_name: str = "system", timeout: int = 90, preferred_model: Optional[str] = None) -> dict:
+def run_hermes_json(prompt: str, app_name: str = "system", timeout: int = 90, preferred_model: Optional[str] = None, max_models: Optional[int] = None) -> dict:
     """
     Gọi Hermes API và bóc tách dữ liệu JSON an toàn từ kết quả trả về.
     """
-    raw_output = run_hermes_prompt(prompt, app_name=app_name, timeout=timeout, preferred_model=preferred_model)
+    raw_output = run_hermes_prompt(prompt, app_name=app_name, timeout=timeout, preferred_model=preferred_model, max_models=max_models)
     json_match = re.search(r'\{.*\}', raw_output, re.DOTALL)
     if json_match:
         clean_json = json_match.group(0)
@@ -463,8 +477,11 @@ def deploy_app(repo_url: str, app_name: str, app_domain: str, ai_provider: str =
     with open(f"{LOGS_DIR}/{app_name}.log", "w", encoding="utf-8") as f:
         f.write(f"=== [BẮT ĐẦU DEPLOY] {app_name} (AI Engine: {ai_provider.upper()}) ===\n")
 
+    from hermes_verifier import finalize_pipeline
+
     IMAGE_TAG = f"{DOCKER_USER}/{app_name}:latest"
     WORKSPACE_DIR = f"{BASE_WORKSPACE}/{app_name}"
+    workloads = [f"deployment/{app_name}"]
 
     os.makedirs(BASE_WORKSPACE, exist_ok=True)
     if os.path.exists(WORKSPACE_DIR):
@@ -628,8 +645,12 @@ QUY ĐỊNH "user_action_required" (CỰC KỲ QUAN TRỌNG):
                 f_name = patch.get("file_name")
                 f_content = patch.get("new_content")
                 if f_name and f_content:
+                    patch_path = safe_join(WORKSPACE_DIR, f_name)
+                    if not patch_path:
+                        write_log(app_name, f" ⛔ [AUTO-HEAL] Bỏ qua bản vá ngoài workspace: {f_name}")
+                        continue
                     write_log(app_name, f" 🛠️ [AUTO-HEAL] AI đang tự động vá lỗi file cấu hình: {f_name}...")
-                    patch_path = os.path.join(WORKSPACE_DIR, f_name)
+                    os.makedirs(os.path.dirname(patch_path), exist_ok=True)
                     with open(patch_path, "w", encoding="utf-8") as pf:
                         pf.write(f_content)
 
@@ -668,12 +689,11 @@ QUY ĐỊNH "user_action_required" (CỰC KỲ QUAN TRỌNG):
         run_cmd(["kubectl", "apply", "-f", "k8s/service.yaml"], app_name, cwd=WORKSPACE_DIR)
         run_cmd(["kubectl", "apply", "-f", "k8s/ingress.yaml"], app_name, cwd=WORKSPACE_DIR)
 
-        write_log(app_name, f"=== [HOÀN TẤT] Ứng dụng đã online tại https://{app_domain} ===")
-        write_log(app_name, "DONE")
+        finalize_pipeline(app_name, workloads, success_lines=[f"=== [HOÀN TẤT] Ứng dụng đã online tại https://{app_domain} ==="])
 
     except Exception as e:
         write_log(app_name, f"\n[LỖI QUY TRÌNH DEPLOY] {e}")
-        write_log(app_name, "ERROR")
+        finalize_pipeline(app_name, workloads, error=str(e))
 
 def delete_app(app_name: str):
     write_log(app_name, f"\n=== [BẮT ĐẦU XÓA DỰ ÁN] {app_name} ===")

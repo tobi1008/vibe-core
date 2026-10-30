@@ -50,7 +50,7 @@ def require_api_key(request: Request):
 
 
 def validate_app_name(app_name: Optional[str]) -> str:
-    if not app_name or not APP_NAME_PATTERN.match(app_name):
+    if not app_name or not APP_NAME_PATTERN.fullmatch(app_name):
         raise HTTPException(
             status_code=400,
             detail="Tên ứng dụng không hợp lệ: chỉ gồm chữ thường, số, dấu '-' (tối đa 40 ký tự, không bắt đầu/kết thúc bằng '-')."
@@ -94,9 +94,18 @@ def safe_upload_filename(filename: Optional[str]) -> str:
 
 
 def is_inside_dir(base_dir: str, target_path: str) -> bool:
-    base = os.path.abspath(base_dir)
-    target = os.path.abspath(target_path)
+    """So sánh đường dẫn thật (đã resolve symlink) để chặn thoát workspace qua symlink"""
+    base = os.path.realpath(base_dir)
+    target = os.path.realpath(target_path)
     return target == base or target.startswith(base + os.sep)
+
+
+def safe_join(base_dir: str, rel_path: str) -> Optional[str]:
+    """Ghép đường dẫn do AI/người dùng gửi lên, trả về None nếu nằm ngoài base_dir hoặc chạm vào .git"""
+    if not rel_path or touches_git_dir(rel_path):
+        return None
+    full_path = os.path.join(base_dir, rel_path)
+    return full_path if is_inside_dir(base_dir, full_path) and os.path.realpath(full_path) != os.path.realpath(base_dir) else None
 
 
 def touches_git_dir(rel_path: str) -> bool:
