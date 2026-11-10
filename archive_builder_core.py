@@ -25,6 +25,7 @@ from builder_core import (
     run_agy_json,
     call_ai_json,
     delete_app,
+    resolve_nixpacks_toml,
 )
 
 UPLOAD_DIR = "/opt/vibe-hosting/uploads"
@@ -328,6 +329,7 @@ QUY ĐỊNH NIXPACKS_TOML (CỰC KỲ QUAN TRỌNG):
   NIXPACKS_INSTALL_CMD = "npm install"
   CI = "false"
 - NẾU LÀ DỰ ÁN PYTHON: TUYỆT ĐỐI KHÔNG thêm block `[variables]`. Hãy để trống phần này để Nixpacks tự xử lý pip và venv!
+- NẾU LÀ WEB TĨNH (chỉ có index.html, css, js, ảnh; không có package.json): KHÔNG dùng `npx`/`node`/`python` để chạy. Hệ thống tự phục vụ bằng nginx ở cổng 80, nên `containerPort` và `targetPort` BẮT BUỘC là 80.
 
 QUY ĐỊNH K3S YAML (CẤM TỰ CHẾ TÊN & CẤM DÙNG NGINX):
 - `metadata.name` BẮT BUỘC là `{app_name}`.
@@ -393,7 +395,7 @@ QUY ĐỊNH "user_action_required" (CỰC KỲ QUAN TRỌNG):
             # Bước 4: Lưu cấu hình Nixpacks & K3s
             write_log(app_name, "[4] Đang lưu cấu hình K3s & Nixpacks...")
             with open(f"{WORKSPACE_DIR}/nixpacks.toml", "w", encoding="utf-8") as f:
-                f.write(config_json.get("nixpacks_toml", ""))
+                f.write(resolve_nixpacks_toml(WORKSPACE_DIR, config_json.get("nixpacks_toml", ""), app_name))
 
             k8s_dir = os.path.join(WORKSPACE_DIR, "k8s")
             os.makedirs(k8s_dir, exist_ok=True)

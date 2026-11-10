@@ -196,3 +196,30 @@ def test_verdict_recorded_for_new_revision_only(paths, kube):
     # Build lỗi trước khi apply => revision 4 trên K3s vẫn là bản cũ, không được gán lỗi lần này
     hermes_verifier.verify_deployment("shop", ["deployment/shop"], error="nixpacks build failed")
     assert hermes_verifier.load_revision_verdicts("shop")["deployment/shop"]["4"]["status"] == "code_error"
+
+
+def test_pod_that_crashes_right_after_ready_is_not_healthy(paths, kube, monkeypatch):
+    # Tình huống thực tế (app "nutkin"): không có readinessProbe nên rollout báo xong ngay,
+    # vài giây sau lệnh start lỗi "npx: command not found" => CrashLoopBackOff
+    kube.pods = {"app=nutkin": [pod("nutkin-1", ready=True)]}
+
+    def pod_crashes(seconds):
+        kube.workloads = {"deployment/nutkin": not_ready_deployment("nutkin")}
+        kube.pods = {"app=nutkin": [pod("nutkin-1", "CrashLoopBackOff", restarts=1, last_reason="Error")]}
+    monkeypatch.setattr(hermes_verifier, "_sleep", pod_crashes)
+    kube.logs = "/bin/bash: line 1: npx: command not found"
+
+    ok = hermes_verifier.finalize_pipeline("nutkin", ["deployment/nutkin"], success_lines=["=== [HOÀN TẤT] ok ==="])
+    assert not ok
+    assert log_lines(paths, "nutkin")[-1] == "ERROR"
+    report = hermes_verifier.load_report("nutkin")
+    assert report["status"] == "code_error"
+    assert "không ổn định" in report["workloads"][0]["rollout"]
+
+
+def test_old_pods_terminating_after_rollout_do_not_count(paths, kube, monkeypatch):
+    old = pod("shop-old", ready=False)
+    old["metadata"]["deletionTimestamp"] = "2026-11-10T12:00:00Z"
+    old["status"]["containerStatuses"][0]["state"] = {"terminated": {"reason": "Error", "exitCode": 143}}
+    kube.pods = {"app=shop": [pod("shop-new", ready=True), old]}
+    assert hermes_verifier.finalize_pipeline("shop", ["deployment/shop"])

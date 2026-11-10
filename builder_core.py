@@ -461,6 +461,34 @@ def new_image_tag(image_repo: str) -> str:
     return f"{image_repo}:{int(time.time())}"
 
 
+# Có một trong các file này => dự án có runtime/bước build riêng, không phải web tĩnh thuần
+_NON_STATIC_MARKERS = (
+    "package.json", "requirements.txt", "pyproject.toml", "Pipfile", "composer.json", "go.mod",
+    "pom.xml", "build.gradle", "Gemfile", "Cargo.toml", "Dockerfile", "main.py", "app.py",
+    "index.php", "deno.json",
+)
+
+STATIC_SITE_NIXPACKS_TOML = "# Web tĩnh: dùng provider staticfile của Nixpacks (nginx, mặc định cổng 80), không ghi đè lệnh start\n"
+
+
+def is_static_site(workspace_dir: str) -> bool:
+    """Web tĩnh thuần: có index.html ở gốc và không có file cấu hình của runtime nào"""
+    return os.path.isfile(os.path.join(workspace_dir, "index.html")) and not any(
+        os.path.exists(os.path.join(workspace_dir, m)) for m in _NON_STATIC_MARKERS
+    )
+
+
+def resolve_nixpacks_toml(workspace_dir: str, ai_toml: str, app_name: str) -> str:
+    """
+    Nixpacks dựng web tĩnh bằng image chỉ có nginx (không có Node/Python). Nếu giữ lệnh start do AI
+    sinh (vd `npx serve`), container crash ngay với "npx: command not found" => web tĩnh luôn dùng cấu hình cố định.
+    """
+    if is_static_site(workspace_dir):
+        write_log(app_name, "🗂️ [STATIC] Phát hiện web tĩnh (index.html, không có runtime): phục vụ bằng nginx của Nixpacks, bỏ qua lệnh start do AI sinh.")
+        return STATIC_SITE_NIXPACKS_TOML
+    return ai_toml
+
+
 def write_log(app_name, message):
     message = redact_secrets(str(message))
     os.makedirs(LOGS_DIR, exist_ok=True)
@@ -600,6 +628,7 @@ QUY ĐỊNH NIXPACKS_TOML (CỰC KỲ QUAN TRỌNG):
   NIXPACKS_INSTALL_CMD = "npm install"
   CI = "false"
 - NẾU LÀ DỰ ÁN PYTHON: TUYỆT ĐỐI KHÔNG thêm block `[variables]`. Hãy để trống phần này để Nixpacks tự xử lý pip và venv!
+- NẾU LÀ WEB TĨNH (chỉ có index.html, css, js, ảnh; không có package.json): KHÔNG dùng `npx`/`node`/`python` để chạy. Hệ thống tự phục vụ bằng nginx ở cổng 80, nên `containerPort` và `targetPort` BẮT BUỘC là 80.
 
 QUY ĐỊNH K3S YAML (CẤM TỰ CHẾ TÊN & CẤM DÙNG NGINX):
 - `metadata.name` BẮT BUỘC là `{app_name}`.
@@ -664,7 +693,7 @@ QUY ĐỊNH "user_action_required" (CỰC KỲ QUAN TRỌNG):
 
             write_log(app_name, "[4] Đang lưu cấu hình K3s & Nixpacks...")
             with open(f"{WORKSPACE_DIR}/nixpacks.toml", "w") as f:
-                f.write(config_json.get("nixpacks_toml", ""))
+                f.write(resolve_nixpacks_toml(WORKSPACE_DIR, config_json.get("nixpacks_toml", ""), app_name))
 
             k8s_dir = os.path.join(WORKSPACE_DIR, "k8s")
             os.makedirs(k8s_dir, exist_ok=True)

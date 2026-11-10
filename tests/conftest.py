@@ -123,6 +123,7 @@ def kube(monkeypatch):
     monkeypatch.setattr(hermes_verifier, "_kubectl", fake)
     monkeypatch.setattr(hermes_verifier, "HERMES_VERIFY_ENABLED", False)
     monkeypatch.setattr(hermes_verifier, "ROLLOUT_TIMEOUT", 0)  # Pod chưa Ready => kết luận ngay, không chờ
+    monkeypatch.setattr(hermes_verifier, "_sleep", lambda seconds: None)
     return fake
 
 

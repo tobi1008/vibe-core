@@ -25,6 +25,9 @@ from security import redact_secrets
 # Image Next.js/Node có thể vài trăm MB tới hơn 1GB, lần đầu K3s kéo image mất vài phút
 ROLLOUT_TIMEOUT = int(os.getenv("VERIFY_ROLLOUT_TIMEOUT", "600"))
 ROLLOUT_POLL_SECONDS = 15
+# Pod không có readinessProbe được coi là Ready ngay khi container vừa chạy, kể cả khi vài giây sau
+# lệnh start lỗi (vd "npx: command not found"). Theo dõi thêm một lúc rồi mới kết luận ổn định.
+STABILITY_SECONDS = int(os.getenv("VERIFY_STABILITY_SECONDS", "20"))
 HERMES_VERIFY_ENABLED = os.getenv("HERMES_VERIFY", "1") != "0"
 HERMES_VERIFY_TIMEOUT = int(os.getenv("HERMES_VERIFY_TIMEOUT", "45"))
 HERMES_VERIFY_MAX_MODELS = 3
@@ -143,6 +146,9 @@ def wait_for_rollout(workload: str) -> Dict[str, Any]:
         step = max(1, min(ROLLOUT_POLL_SECONDS, int(deadline - time.time())))
         res = _kubectl(["rollout", "status", workload, f"--timeout={step}s"], timeout=step + 15)
         if res.returncode == 0:
+            reasons = wait_for_stability(workload)
+            if reasons:
+                return {"ready": False, "message": f"Pod Ready rồi nhưng không ổn định: {', '.join(sorted(reasons))}"}
             return {"ready": True, "message": res.stdout.strip()[-300:]}
 
         reasons = blocking_reasons(collect_workload(workload, with_logs=False))
@@ -150,6 +156,41 @@ def wait_for_rollout(workload: str) -> Dict[str, Any]:
             return {"ready": False, "message": f"Dừng chờ vì: {', '.join(sorted(reasons))}"}
         if time.time() >= deadline:
             return {"ready": False, "message": f"Hết {ROLLOUT_TIMEOUT}s mà Pod vẫn chưa Ready. {res.stderr.strip()[-200:]}"}
+
+
+def _live_pods(info: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Bỏ qua Pod của phiên bản cũ đang bị xoá sau rollout"""
+    return [p for p in info.get("pods", []) if not p.get("terminating")]
+
+
+def wait_for_stability(workload: str) -> set:
+    """
+    Sau khi rollout báo thành công, chờ STABILITY_SECONDS rồi kiểm tra lại:
+    container bị restart, crash hoặc số Pod Ready tụt xuống => không ổn định.
+    """
+    if STABILITY_SECONDS <= 0:
+        return set()
+    before = collect_workload(workload, with_logs=False)
+    baseline = {(p["name"], c["name"]): c["restarts"] for p in _live_pods(before) for c in p["containers"]}
+    _sleep(STABILITY_SECONDS)
+
+    after = collect_workload(workload, with_logs=False)
+    if not after["found"]:
+        return {"NotFound"}
+    reasons = set()
+    for p in _live_pods(after):
+        for c in p["containers"]:
+            if c.get("state") in ("waiting", "terminated") and c.get("reason") in APP_CRASH_REASONS | FAIL_FAST_REASONS:
+                reasons.add(c["reason"])
+            if c["restarts"] > baseline.get((p["name"], c["name"]), 0):
+                reasons.add("Restarted")
+    if after["ready_replicas"] < (after["replicas"] or 1):
+        reasons.add("NotReady")
+    return reasons
+
+
+def _sleep(seconds: float) -> None:
+    time.sleep(seconds)
 
 
 def _container_states(pod: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -210,6 +251,7 @@ def collect_workload(workload: str, with_logs: bool = True) -> Dict[str, Any]:
                 "name": pod.get("metadata", {}).get("name"),
                 "template_hash": (pod.get("metadata", {}).get("labels", {}) or {}).get("pod-template-hash"),
                 "phase": pod.get("status", {}).get("phase"),
+                "terminating": bool(pod.get("metadata", {}).get("deletionTimestamp")),
                 "conditions": [
                     {"type": c.get("type"), "status": c.get("status"), "reason": c.get("reason"), "message": (c.get("message") or "")[:200]}
                     for c in pod.get("status", {}).get("conditions", []) or []

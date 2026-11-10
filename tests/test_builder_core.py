@@ -136,3 +136,22 @@ def test_each_deploy_gets_a_new_image_tag(monkeypatch):
     monkeypatch.setattr(builder_core.time, "time", lambda: next(ticks))
     assert builder_core.new_image_tag("tobi1008/shop") == "tobi1008/shop:1761800000"
     assert builder_core.new_image_tag("tobi1008/shop-be") == "tobi1008/shop-be:1761800500"
+
+
+# ---------- Web tĩnh ----------
+
+def test_static_site_ignores_ai_start_command(tmp_path, paths):
+    # Tình huống thực tế (app "nutkin"): AI sinh `npx serve` cho web tĩnh, image chỉ có nginx => crash
+    (tmp_path / "index.html").write_text("<h1>hi</h1>")
+    (tmp_path / "assets").mkdir()
+    toml = builder_core.resolve_nixpacks_toml(str(tmp_path), '[start]\ncmd = "npx --yes serve -s . -l 80"', "nutkin")
+    assert toml == builder_core.STATIC_SITE_NIXPACKS_TOML
+    assert "npx" not in toml and "[start]" not in toml
+
+
+@pytest.mark.parametrize("marker", ["package.json", "requirements.txt", "Dockerfile", "index.php"])
+def test_site_with_runtime_keeps_ai_config(tmp_path, paths, marker):
+    (tmp_path / "index.html").write_text("<h1>hi</h1>")
+    (tmp_path / marker).write_text("")
+    ai_toml = '[start]\ncmd = "npm start"'
+    assert builder_core.resolve_nixpacks_toml(str(tmp_path), ai_toml, "app") == ai_toml
