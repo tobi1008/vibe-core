@@ -154,7 +154,7 @@ Danh sách engine và model hiện có được trả về qua `GET /api/ai-prov
 
 | Cơ chế | Mô tả |
 |---|---|
-| Xác thực API | Mọi endpoint yêu cầu header `X-API-Key`, so khớp theo thời gian hằng (constant-time). Riêng webhook được xác thực bằng chữ ký GitHub. |
+| Xác thực API | Mọi endpoint yêu cầu header `X-API-Key`, so khớp theo thời gian hằng (constant-time). Riêng webhook được xác thực bằng chữ ký GitHub. `/api/deploy-archive*` còn nhận header `X-Upload-Token`: token ngắn hạn do dashboard ký HMAC bằng `VIBE_API_KEY`, gắn với một `app_name`, để trình duyệt upload file nén trực tiếp. |
 | Chữ ký webhook | Kiểm tra `X-Hub-Signature-256` (HMAC-SHA256) với `GITHUB_WEBHOOK_SECRET`. |
 | Kiểm tra đầu vào | `app_name` theo chuẩn tên tài nguyên Kubernetes; URL repo bắt buộc `https://`; tên file upload được làm sạch. Các ràng buộc này chặn chèn lệnh shell, chèn tham số vào `git` và path traversal. |
 | Thực thi lệnh từ AI | Lệnh do AI đề xuất chỉ được chạy bên trong container của ứng dụng, không bao giờ chạy trên máy chủ. Thao tác Kubernetes chỉ đi qua các hành động có kiểm soát. |
@@ -168,7 +168,7 @@ Phân quyền theo người dùng (ai sở hữu app nào) được thực hiệ
 
 ## Tài liệu API
 
-**Xác thực:** gửi header `X-API-Key: <VIBE_API_KEY>` với mọi request, trừ `/api/webhooks/*`.
+**Xác thực:** gửi header `X-API-Key: <VIBE_API_KEY>` với mọi request, trừ `/api/webhooks/*`. Hai endpoint upload file nén chấp nhận thêm `X-Upload-Token` (xem bảng bảo mật) và giới hạn dung lượng theo `MAX_UPLOAD_MB` (mặc định 500).
 
 | Mã lỗi | Ý nghĩa |
 |---|---|
@@ -294,6 +294,7 @@ Tạo file `.env` trong thư mục gốc của dự án. File này đã nằm tr
 | Biến | Bắt buộc | Mô tả |
 |---|---|---|
 | `VIBE_API_KEY` | Có | Khoá API mà client phải gửi trong header `X-API-Key`. Tạo bằng `openssl rand -hex 32`. |
+| `MAX_UPLOAD_MB` | Không | Dung lượng tối đa (MB) của một request upload file nén. Mặc định `500`. Nếu có nginx phía trước, `client_max_body_size` cũng phải lớn hơn mức này. |
 | `GITHUB_WEBHOOK_SECRET` | Khuyến nghị | Secret để xác minh webhook GitHub; phải trùng với giá trị cấu hình ở frontend. Nếu để trống, webhook không được xác minh chữ ký. |
 | `DOCKER_PASSWORD` | Khuyến nghị | Token Docker Hub, dùng để xoá image khi xoá app. |
 | `HERMES_API_URL` | Không | Endpoint của Hermes. Mặc định `http://127.0.0.1:8645/v1/chat/completions`. |

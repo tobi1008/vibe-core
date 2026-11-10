@@ -13,7 +13,8 @@ from cicd_core import redeploy_app
 from db_builder_core import deploy_app_with_db, deploy_fullstack_app, delete_app_db_resources
 from monorepo_builder_core import deploy_monorepo_app
 from hermes_verifier import verify_deployment, discover_workloads, load_report, revision_history
-from security import require_api_key, validate_app_name, validate_repo_url, verify_github_signature, redact_secrets, safe_upload_filename
+from fastapi.responses import JSONResponse
+from security import require_api_key, require_upload_scope, UPLOAD_TOKEN_PATHS, MAX_UPLOAD_BYTES, validate_app_name, validate_repo_url, verify_github_signature, redact_secrets, safe_upload_filename
 try:
     from cms_builder_core import deploy_cms_app
 except Exception:
@@ -36,6 +37,21 @@ except Exception as e:
     hermes_agent_router = None
 
 app = FastAPI(title="Vibe Hosting API", version="2.4.0", dependencies=[Depends(require_api_key)])
+
+
+# Khai báo trước CORSMiddleware để CORS bọc ngoài: trình duyệt đọc được lỗi 413 thay vì báo lỗi mạng
+@app.middleware("http")
+async def limit_upload_size(request: Request, call_next):
+    """Từ chối file nén quá lớn dựa vào Content-Length, trước khi đọc body"""
+    if request.method == "POST" and request.url.path in UPLOAD_TOKEN_PATHS:
+        length = request.headers.get("content-length", "")
+        if length.isdigit() and int(length) > MAX_UPLOAD_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": f"File tải lên vượt quá giới hạn {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."},
+            )
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -341,6 +357,7 @@ async def trigger_deploy_db(
 
 @app.post("/api/deploy-archive")
 async def trigger_deploy_archive(
+    request: Request,
     background_tasks: BackgroundTasks,
     archive_file: UploadFile = File(...),
     app_name: str = Form(...),
@@ -348,6 +365,7 @@ async def trigger_deploy_archive(
     ai_provider: Optional[str] = Form("agy")
 ):
     validate_app_name(app_name)
+    require_upload_scope(request, app_name)
     safe_filename = safe_upload_filename(archive_file.filename)
     saved_archive_path = f"{UPLOAD_DIR}/{app_name}_{safe_filename}"
     ai_engine = normalize_config_engine(ai_provider)
@@ -378,6 +396,7 @@ async def trigger_deploy_archive(
 
 @app.post("/api/deploy-archive-with-db")
 async def trigger_deploy_archive_with_db(
+    request: Request,
     background_tasks: BackgroundTasks,
     archive_file: UploadFile = File(...),
     app_name: str = Form(...),
@@ -387,6 +406,7 @@ async def trigger_deploy_archive_with_db(
     ai_provider: Optional[str] = Form("agy")
 ):
     validate_app_name(app_name)
+    require_upload_scope(request, app_name)
     safe_filename = safe_upload_filename(archive_file.filename)
     saved_archive_path = f"{UPLOAD_DIR}/{app_name}_{safe_filename}"
     ai_engine = normalize_config_engine(ai_provider)

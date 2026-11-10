@@ -1,6 +1,7 @@
 """
 Các hàm bảo mật dùng chung cho Vibe Hosting API:
 - Xác thực API Key cho mọi endpoint (trừ GitHub Webhook)
+- Xác thực token upload ngắn hạn cho các endpoint nhận file nén (trình duyệt gửi thẳng)
 - Kiểm tra tên ứng dụng / URL repository do người dùng gửi lên
 - Xác minh chữ ký GitHub Webhook
 - Che token/mật khẩu khi ghi log hoặc trả lỗi
@@ -10,6 +11,7 @@ import hashlib
 import hmac
 import os
 import re
+import time
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -22,6 +24,14 @@ GITHUB_WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 
 # Các endpoint không yêu cầu API Key (được bảo vệ bằng cơ chế riêng)
 PUBLIC_PATH_PREFIXES = ("/api/webhooks/",)
+
+# Trình duyệt upload file nén thẳng lên API (không qua Vercel, vốn giới hạn body 4,5 MB),
+# nên không có API Key. Dashboard cấp một token ngắn hạn, ký HMAC bằng VIBE_API_KEY và gắn với app_name.
+UPLOAD_TOKEN_PATHS = ("/api/deploy-archive", "/api/deploy-archive-with-db")
+UPLOAD_TOKEN_HEADER = "X-Upload-Token"
+# Token được kiểm tra sau khi FastAPI đọc xong body, nên hạn phải đủ dài cho file lớn trên mạng chậm
+UPLOAD_TOKEN_MAX_TTL = 30 * 60
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "500")) * 1024 * 1024
 
 # Tên app dùng làm tên tài nguyên K8s, tên thư mục và ghép vào lệnh shell,
 # nên chỉ cho phép chữ thường, số và dấu gạch ngang (chuẩn DNS label của K8s)
@@ -40,13 +50,54 @@ def require_api_key(request: Request):
     if not request.url.path.startswith(PUBLIC_PATH_PREFIXES):
         if not VIBE_API_KEY:
             raise HTTPException(status_code=503, detail="Máy chủ chưa cấu hình VIBE_API_KEY.")
-        provided = request.headers.get("X-API-Key", "")
-        if not hmac.compare_digest(provided.encode(), VIBE_API_KEY.encode()):
-            raise HTTPException(status_code=401, detail="API Key không hợp lệ hoặc bị thiếu.")
+        upload_token = request.headers.get(UPLOAD_TOKEN_HEADER)
+        if upload_token and request.url.path in UPLOAD_TOKEN_PATHS:
+            app_name = verify_upload_token(upload_token)
+            if not app_name:
+                raise HTTPException(status_code=401, detail="Token upload không hợp lệ hoặc đã hết hạn.")
+            request.state.upload_app_name = app_name
+        else:
+            provided = request.headers.get("X-API-Key", "")
+            if not hmac.compare_digest(provided.encode(), VIBE_API_KEY.encode()):
+                raise HTTPException(status_code=401, detail="API Key không hợp lệ hoặc bị thiếu.")
 
     for param in ("app_name", "project_name"):
         if param in request.path_params:
             validate_app_name(request.path_params[param])
+
+
+def _sign_upload(app_name: str, expires_at: int) -> str:
+    message = f"archive-upload:{app_name}:{expires_at}".encode()
+    return hmac.new(VIBE_API_KEY.encode(), message, hashlib.sha256).hexdigest()
+
+
+def create_upload_token(app_name: str, ttl: int = 15 * 60) -> str:
+    """Định dạng token: <app_name>.<expires_at>.<hmac_hex> (dashboard tạo token cùng định dạng)"""
+    expires_at = int(time.time()) + ttl
+    return f"{app_name}.{expires_at}.{_sign_upload(app_name, expires_at)}"
+
+
+def verify_upload_token(token: str) -> Optional[str]:
+    """Trả về app_name nếu token đúng chữ ký và còn hạn, ngược lại trả về None"""
+    if not VIBE_API_KEY:
+        return None
+    parts = (token or "").split(".")
+    if len(parts) != 3 or not APP_NAME_PATTERN.fullmatch(parts[0]) or not parts[1].isdigit():
+        return None
+    app_name, expires_at = parts[0], int(parts[1])
+    now = int(time.time())
+    if expires_at < now or expires_at > now + UPLOAD_TOKEN_MAX_TTL:
+        return None
+    if not hmac.compare_digest(_sign_upload(app_name, expires_at), parts[2]):
+        return None
+    return app_name
+
+
+def require_upload_scope(request: Request, app_name: str) -> None:
+    """Request dùng token upload chỉ được deploy đúng app_name đã ghi trong token"""
+    scoped = getattr(request.state, "upload_app_name", None)
+    if scoped is not None and scoped != app_name:
+        raise HTTPException(status_code=403, detail="Token upload không áp dụng cho ứng dụng này.")
 
 
 def validate_app_name(app_name: Optional[str]) -> str:

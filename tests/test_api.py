@@ -132,6 +132,53 @@ def test_deploy_archive_sanitizes_upload_name(client, rec, paths):
     assert args[0] == str(saved)
 
 
+def _archive_upload(c, app_name="zipapp", headers=None):
+    return c.post(
+        "/api/deploy-archive",
+        data={"app_name": app_name, "app_domain": "z.example.com"},
+        files={"archive_file": ("src.zip", b"PK\x03\x04", "application/zip")},
+        headers=headers or {},
+    )
+
+
+def test_archive_upload_with_browser_token(paths, rec):
+    """Trình duyệt upload thẳng bằng token ngắn hạn, không có API Key"""
+    from fastapi.testclient import TestClient
+    token = security.create_upload_token("zipapp")
+    with TestClient(main.app) as c:
+        assert _archive_upload(c, headers={"X-Upload-Token": token}).status_code == 200
+        # Token gắn với app_name: không dùng để deploy app khác
+        assert _archive_upload(c, app_name="other", headers={"X-Upload-Token": token}).status_code == 403
+    assert len(rec["deploy_archive_app"].calls) == 1
+
+
+@pytest.mark.parametrize("token_of", [
+    lambda: security.create_upload_token("zipapp", ttl=-5),           # hết hạn
+    lambda: security.create_upload_token("zipapp", ttl=24 * 3600),    # hạn quá dài
+    lambda: security.create_upload_token("zipapp")[:-1] + "0",        # sai chữ ký
+    lambda: "zipapp.9999999999",                                      # sai định dạng
+])
+def test_archive_upload_rejects_bad_token(paths, rec, token_of):
+    from fastapi.testclient import TestClient
+    with TestClient(main.app) as c:
+        assert _archive_upload(c, headers={"X-Upload-Token": token_of()}).status_code == 401
+    assert rec["deploy_archive_app"].calls == []
+
+
+def test_upload_token_only_works_on_archive_endpoints(paths):
+    from fastapi.testclient import TestClient
+    token = security.create_upload_token("zipapp")
+    with TestClient(main.app) as c:
+        assert c.get("/api/ai-providers", headers={"X-Upload-Token": token}).status_code == 401
+
+
+def test_archive_upload_too_large_is_rejected_before_reading(client, rec, monkeypatch):
+    monkeypatch.setattr(main, "MAX_UPLOAD_BYTES", 10)
+    res = _archive_upload(client)
+    assert res.status_code == 413
+    assert rec["deploy_archive_app"].calls == []
+
+
 def test_deploy_with_db_saves_backup(client, rec, no_github, paths):
     res = client.post(
         "/api/deploy-with-db",
