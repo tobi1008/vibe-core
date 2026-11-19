@@ -152,10 +152,15 @@ def test_archive_upload_with_browser_token(paths, rec):
     assert len(rec["deploy_archive_app"].calls) == 1
 
 
+def _flip_last_char(token: str) -> str:
+    """Đổi ký tự cuối sang ký tự KHÁC (thay cứng bằng "0" sẽ không đổi gì khi ký tự cuối vốn là "0")"""
+    return token[:-1] + ("1" if token[-1] == "0" else "0")
+
+
 @pytest.mark.parametrize("token_of", [
     lambda: security.create_upload_token("zipapp", ttl=-5),           # hết hạn
     lambda: security.create_upload_token("zipapp", ttl=24 * 3600),    # hạn quá dài
-    lambda: security.create_upload_token("zipapp")[:-1] + "0",        # sai chữ ký
+    lambda: _flip_last_char(security.create_upload_token("zipapp")),  # sai chữ ký
     lambda: "zipapp.9999999999",                                      # sai định dạng
 ])
 def test_archive_upload_rejects_bad_token(paths, rec, token_of):
