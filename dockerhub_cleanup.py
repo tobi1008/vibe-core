@@ -133,7 +133,7 @@ def build_plan(token: Optional[str] = None) -> Dict[str, Any]:
     """
     token = token or dockerhub_token()
     if not token:
-        raise CleanupError("Đăng nhập Docker Hub thất bại, kiểm tra DOCKER_PASSWORD (cần Personal Access Token có quyền Delete).")
+        raise CleanupError("Đăng nhập Docker Hub thất bại: chưa có DOCKER_PASSWORD và không đọc được thông tin docker login trên máy chủ, hoặc thông tin đó sai.")
 
     now = datetime.now(timezone.utc)
     used = used_tags_by_repo(images_in_use())
@@ -173,6 +173,8 @@ def _delete(url: str, token: str) -> str:
         return "deleted"
     if resp.status_code == 404:
         return "not_found"
+    if resp.status_code in (401, 403):
+        return f"error: HTTP {resp.status_code} (token không có quyền Delete)"
     return f"error: HTTP {resp.status_code}"
 
 
@@ -180,7 +182,7 @@ def execute(repos: List[str], tags: Dict[str, List[str]]) -> Dict[str, Any]:
     """Xóa các mục người dùng đã chọn, chỉ khi chúng vẫn nằm trong kế hoạch tính lại ngay lúc này"""
     token = dockerhub_token()
     if not token:
-        raise CleanupError("Đăng nhập Docker Hub thất bại, kiểm tra DOCKER_PASSWORD.")
+        raise CleanupError("Đăng nhập Docker Hub thất bại: kiểm tra DOCKER_PASSWORD hoặc docker login trên máy chủ.")
     plan = build_plan(token)
     allowed_repos = {r["repo"] for r in plan["orphan_repos"]}
     result: Dict[str, Any] = {"repos": {}, "tags": {}, "refused": []}

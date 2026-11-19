@@ -118,6 +118,13 @@ class FakeKubectl:
 
 
 @pytest.fixture(autouse=True)
+def no_real_docker_login(tmp_path, monkeypatch):
+    """Không đọc ~/.docker/config.json thật của máy chạy test"""
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path / "docker-config"))
+    monkeypatch.setattr(builder_core, "DOCKER_PASSWORD", None)
+
+
+@pytest.fixture(autouse=True)
 def kube(monkeypatch):
     """Không gọi kubectl / Hermes thật trong test"""
     fake = FakeKubectl()

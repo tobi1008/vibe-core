@@ -761,14 +761,68 @@ def image_repositories(app_name: str) -> list:
     return [app_name, f"{app_name}-be", f"{app_name}-fe"]
 
 
+_DOCKER_HUB_REGISTRY_KEYS = ("https://index.docker.io/v1/", "index.docker.io", "docker.io", "https://docker.io")
+
+
+def docker_login_credentials() -> Optional[tuple]:
+    """
+    Thông tin `docker login` sẵn có trên máy chủ (dùng khi chưa đặt DOCKER_PASSWORD):
+    đọc auth base64 trong ~/.docker/config.json, hoặc hỏi credential helper (credsStore / credHelpers).
+    Trả về (username, secret) hoặc None.
+    """
+    config_dir = os.getenv("DOCKER_CONFIG") or os.path.expanduser("~/.docker")
+    try:
+        with open(os.path.join(config_dir, "config.json"), "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        return None
+
+    import base64
+    auths = cfg.get("auths", {}) or {}
+    for key in _DOCKER_HUB_REGISTRY_KEYS:
+        auth = (auths.get(key) or {}).get("auth")
+        if auth:
+            try:
+                user, _, secret = base64.b64decode(auth).decode().partition(":")
+            except Exception:
+                continue
+            if user and secret:
+                return user, secret
+
+    helpers = cfg.get("credHelpers", {}) or {}
+    for key in _DOCKER_HUB_REGISTRY_KEYS:
+        helper = helpers.get(key) or cfg.get("credsStore")
+        if not helper:
+            continue
+        try:
+            res = subprocess.run([f"docker-credential-{helper}", "get"], input=key, capture_output=True, text=True, timeout=10)
+            data = json.loads(res.stdout) if res.returncode == 0 else {}
+        except Exception:
+            continue
+        if data.get("Username") and data.get("Secret"):
+            return data["Username"], data["Secret"]
+    return None
+
+
+def dockerhub_credentials() -> Optional[tuple]:
+    """DOCKER_PASSWORD (ưu tiên) hoặc thông tin `docker login` trên máy chủ"""
+    if DOCKER_PASSWORD:
+        return DOCKER_USER, DOCKER_PASSWORD
+    return docker_login_credentials()
+
+
 def dockerhub_token() -> Optional[str]:
     """
-    Lấy access token Docker Hub. DOCKER_PASSWORD nên là Personal Access Token có quyền Delete.
+    Lấy access token Docker Hub. Token cần quyền Delete thì mới xóa được repo / tag.
     Thử API mới (/auth/token) trước, rồi API cũ (/users/login) cho tài khoản chưa chuyển.
     """
+    creds = dockerhub_credentials()
+    if not creds:
+        return None
+    user, secret = creds
     attempts = [
-        (f"{DOCKER_HUB_API}/auth/token", {"identifier": DOCKER_USER, "secret": DOCKER_PASSWORD}, "access_token"),
-        (f"{DOCKER_HUB_API}/users/login/", {"username": DOCKER_USER, "password": DOCKER_PASSWORD}, "token"),
+        (f"{DOCKER_HUB_API}/auth/token", {"identifier": user, "secret": secret}, "access_token"),
+        (f"{DOCKER_HUB_API}/users/login/", {"username": user, "password": secret}, "token"),
     ]
     for url, body, field in attempts:
         resp = requests.post(url, json=body, timeout=20)
@@ -782,16 +836,16 @@ def delete_dockerhub_repos(app_name: str, repos: list) -> Dict[str, str]:
     Xóa các repository image của app trên Docker Hub, ghi rõ kết quả từng repo vào log.
     Trả về {repo: "deleted" | "not_found" | "error: ..."}; không bao giờ raise.
     """
-    if not DOCKER_PASSWORD:
-        write_log(app_name, "⚠️ [DOCKER HUB] Chưa cấu hình DOCKER_PASSWORD, không thể xóa image trên Docker Hub. Hãy xóa thủ công.")
-        return {repo: "error: thiếu DOCKER_PASSWORD" for repo in repos}
+    if not dockerhub_credentials():
+        write_log(app_name, "⚠️ [DOCKER HUB] Chưa có DOCKER_PASSWORD và máy chủ chưa docker login, không thể xóa image trên Docker Hub. Hãy xóa thủ công.")
+        return {repo: "error: thiếu thông tin đăng nhập Docker Hub" for repo in repos}
     try:
         token = dockerhub_token()
     except Exception as e:
         token = None
         write_log(app_name, f"⚠️ [DOCKER HUB] Không kết nối được Docker Hub: {e}")
     if not token:
-        write_log(app_name, f"⚠️ [DOCKER HUB] Đăng nhập Docker Hub thất bại (sai DOCKER_PASSWORD hoặc token thiếu quyền). Hãy xóa thủ công: {', '.join(f'{DOCKER_USER}/{r}' for r in repos)}")
+        write_log(app_name, f"⚠️ [DOCKER HUB] Đăng nhập Docker Hub thất bại (sai DOCKER_PASSWORD / thông tin docker login). Hãy xóa thủ công: {', '.join(f'{DOCKER_USER}/{r}' for r in repos)}")
         return {repo: "error: đăng nhập thất bại" for repo in repos}
 
     results = {}
@@ -810,7 +864,8 @@ def delete_dockerhub_repos(app_name: str, repos: list) -> Dict[str, str]:
             results[repo] = "not_found"
         else:
             results[repo] = f"error: HTTP {resp.status_code}"
-            write_log(app_name, f"⚠️ [DOCKER HUB] Không xóa được {DOCKER_USER}/{repo}: HTTP {resp.status_code} {resp.text[:150]}")
+            hint = " — token không có quyền Delete" if resp.status_code in (401, 403) else ""
+            write_log(app_name, f"⚠️ [DOCKER HUB] Không xóa được {DOCKER_USER}/{repo}: HTTP {resp.status_code}{hint} {resp.text[:150]}")
     return results
 
 

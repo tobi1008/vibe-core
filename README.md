@@ -313,7 +313,7 @@ Tạo file `.env` trong thư mục gốc của dự án. File này đã nằm tr
 | `VIBE_API_KEY` | Có | Khoá API mà client phải gửi trong header `X-API-Key`. Tạo bằng `openssl rand -hex 32`. |
 | `MAX_UPLOAD_MB` | Không | Dung lượng tối đa (MB) của một request upload file nén. Mặc định `500`. Nếu có nginx phía trước, `client_max_body_size` cũng phải lớn hơn mức này. |
 | `GITHUB_WEBHOOK_SECRET` | Khuyến nghị | Secret để xác minh webhook GitHub; phải trùng với giá trị cấu hình ở frontend. Nếu để trống, webhook không được xác minh chữ ký. |
-| `DOCKER_PASSWORD` | Khuyến nghị | Personal Access Token Docker Hub có quyền **Read, Write, Delete**, dùng để xoá image khi xoá app và dọn rác Docker Hub. |
+| `DOCKER_PASSWORD` | Không | Personal Access Token Docker Hub có quyền **Read, Write, Delete**, dùng để xoá image khi xoá app và dọn rác Docker Hub. Bỏ trống thì dùng thông tin `docker login` sẵn có trên máy chủ (`~/.docker/config.json` hoặc credential helper); thông tin đó cũng phải có quyền Delete. |
 | `DOCKERHUB_PROTECTED_REPOS` | Khuyến nghị | Các repo Docker Hub không do Vibe Hosting tạo, cách nhau bởi dấu phẩy (vd `my-blog,vibe-core`). Công cụ dọn rác không bao giờ đụng tới. |
 | `DOCKERHUB_KEEP_TAGS` | Không | Số tag mới nhất luôn giữ lại trong mỗi repo khi dọn rác. Mặc định `3`. |
 | `DOCKERHUB_GRACE_HOURS` | Không | Bỏ qua repo / tag vừa cập nhật trong số giờ này (pipeline có thể đang push). Mặc định `1`. |

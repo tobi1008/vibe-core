@@ -1,3 +1,4 @@
+import json
 import os
 import re
 
@@ -245,4 +246,43 @@ def test_dockerhub_without_password_warns(paths, hub, monkeypatch):
     monkeypatch.setattr(builder_core, "DOCKER_PASSWORD", None)
     builder_core.delete_dockerhub_repos("shop", ["shop"])
     assert hub.deleted == []
-    assert "Chưa cấu hình DOCKER_PASSWORD" in (paths.logs / "shop.log").read_text()
+    assert "Chưa có DOCKER_PASSWORD và máy chủ chưa docker login" in (paths.logs / "shop.log").read_text()
+
+
+def write_docker_config(tmp_path, cfg):
+    d = tmp_path / "docker-config"
+    d.mkdir(exist_ok=True)
+    (d / "config.json").write_text(json.dumps(cfg))
+
+
+def test_docker_login_inline_auth_is_used_without_password(tmp_path):
+    import base64
+    auth = base64.b64encode(b"tobi1008:dckr_pat_login").decode()
+    write_docker_config(tmp_path, {"auths": {"https://index.docker.io/v1/": {"auth": auth}}})
+    assert builder_core.dockerhub_credentials() == ("tobi1008", "dckr_pat_login")
+
+
+def test_docker_password_wins_over_docker_login(tmp_path, monkeypatch):
+    import base64
+    write_docker_config(tmp_path, {"auths": {"https://index.docker.io/v1/": {"auth": base64.b64encode(b"a:b").decode()}}})
+    monkeypatch.setattr(builder_core, "DOCKER_PASSWORD", "from-env")
+    assert builder_core.dockerhub_credentials() == ("tobi1008", "from-env")
+
+
+def test_docker_login_credential_helper(tmp_path, monkeypatch):
+    import subprocess
+    write_docker_config(tmp_path, {"auths": {"https://index.docker.io/v1/": {}}, "credsStore": "pass"})
+    calls = []
+
+    def fake_run(cmd, input=None, capture_output=True, text=True, timeout=None):
+        calls.append((cmd, input))
+        return subprocess.CompletedProcess(cmd, 0, json.dumps({"Username": "tobi1008", "Secret": "s3"}), "")
+
+    monkeypatch.setattr(builder_core.subprocess, "run", fake_run)
+    assert builder_core.dockerhub_credentials() == ("tobi1008", "s3")
+    assert calls[0] == (["docker-credential-pass", "get"], "https://index.docker.io/v1/")
+
+
+def test_no_password_and_no_docker_login_gives_none():
+    assert builder_core.dockerhub_credentials() is None
+    assert builder_core.dockerhub_token() is None
