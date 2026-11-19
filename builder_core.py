@@ -504,9 +504,30 @@ def run_cmd(cmd, app_name, cwd=None):
             write_log(app_name, result.stdout)
         return result.stdout
     except subprocess.CalledProcessError as e:
-        error_msg = f"\n[LỖI LỆNH] {' '.join(cmd)}\nChi tiết lỗi: {e.stderr}"
+        error_msg = f"\n[LỖI LỆNH] {' '.join(cmd)}\nChi tiết lỗi: {describe_cmd_failure(e)}"
         write_log(app_name, error_msg)
         raise Exception(error_msg)
+
+
+# Dòng tiến trình docker push/pull ("4c134b02cb7e: Waiting") không giúp ích gì khi đọc lỗi
+_LAYER_PROGRESS_LINE = re.compile(r"^\s*[0-9a-f]{12}: ")
+
+
+def describe_cmd_failure(e: subprocess.CalledProcessError, max_lines: int = 15) -> str:
+    """
+    Một số lệnh (vd docker push) in lỗi ra stdout, stderr rỗng => log chỉ còn "Chi tiết lỗi:" trống.
+    Luôn kèm mã thoát, stderr và các dòng cuối của stdout (bỏ dòng tiến trình layer).
+    """
+    parts = [f"exit code {e.returncode}"]
+    if e.returncode < 0:
+        parts[0] += f" (tiến trình bị dừng bởi tín hiệu {-e.returncode}, có thể do thiếu RAM hoặc bị kill)"
+    stderr = (e.stderr or "").strip()
+    if stderr:
+        parts.append(stderr)
+    stdout_lines = [line for line in (e.stdout or "").splitlines() if line.strip() and not _LAYER_PROGRESS_LINE.match(line)]
+    if stdout_lines:
+        parts.append("[stdout]\n" + "\n".join(stdout_lines[-max_lines:]))
+    return "\n".join(parts)
 
 def deploy_app(repo_url: str, app_name: str, app_domain: str, ai_provider: str = "agy"):
     os.makedirs(LOGS_DIR, exist_ok=True)
@@ -732,6 +753,67 @@ QUY ĐỊNH "user_action_required" (CỰC KỲ QUAN TRỌNG):
         write_log(app_name, f"\n[LỖI QUY TRÌNH DEPLOY] {e}")
         finalize_pipeline(app_name, workloads, error=str(e))
 
+DOCKER_HUB_API = "https://hub.docker.com/v2"
+
+
+def image_repositories(app_name: str) -> list:
+    """Repository image của một app: single repo dùng <app>, fullstack / monorepo dùng thêm <app>-be, <app>-fe"""
+    return [app_name, f"{app_name}-be", f"{app_name}-fe"]
+
+
+def dockerhub_token() -> Optional[str]:
+    """
+    Lấy access token Docker Hub. DOCKER_PASSWORD nên là Personal Access Token có quyền Delete.
+    Thử API mới (/auth/token) trước, rồi API cũ (/users/login) cho tài khoản chưa chuyển.
+    """
+    attempts = [
+        (f"{DOCKER_HUB_API}/auth/token", {"identifier": DOCKER_USER, "secret": DOCKER_PASSWORD}, "access_token"),
+        (f"{DOCKER_HUB_API}/users/login/", {"username": DOCKER_USER, "password": DOCKER_PASSWORD}, "token"),
+    ]
+    for url, body, field in attempts:
+        resp = requests.post(url, json=body, timeout=20)
+        if resp.status_code == 200 and resp.json().get(field):
+            return resp.json()[field]
+    return None
+
+
+def delete_dockerhub_repos(app_name: str, repos: list) -> Dict[str, str]:
+    """
+    Xóa các repository image của app trên Docker Hub, ghi rõ kết quả từng repo vào log.
+    Trả về {repo: "deleted" | "not_found" | "error: ..."}; không bao giờ raise.
+    """
+    if not DOCKER_PASSWORD:
+        write_log(app_name, "⚠️ [DOCKER HUB] Chưa cấu hình DOCKER_PASSWORD, không thể xóa image trên Docker Hub. Hãy xóa thủ công.")
+        return {repo: "error: thiếu DOCKER_PASSWORD" for repo in repos}
+    try:
+        token = dockerhub_token()
+    except Exception as e:
+        token = None
+        write_log(app_name, f"⚠️ [DOCKER HUB] Không kết nối được Docker Hub: {e}")
+    if not token:
+        write_log(app_name, f"⚠️ [DOCKER HUB] Đăng nhập Docker Hub thất bại (sai DOCKER_PASSWORD hoặc token thiếu quyền). Hãy xóa thủ công: {', '.join(f'{DOCKER_USER}/{r}' for r in repos)}")
+        return {repo: "error: đăng nhập thất bại" for repo in repos}
+
+    results = {}
+    for repo in repos:
+        try:
+            resp = requests.delete(f"{DOCKER_HUB_API}/repositories/{DOCKER_USER}/{repo}/",
+                                   headers={"Authorization": f"Bearer {token}"}, timeout=20)
+        except Exception as e:
+            results[repo] = f"error: {e}"
+            write_log(app_name, f"⚠️ [DOCKER HUB] Lỗi khi xóa {DOCKER_USER}/{repo}: {e}")
+            continue
+        if resp.status_code in (200, 202, 204):
+            results[repo] = "deleted"
+            write_log(app_name, f"🗑️ [DOCKER HUB] Đã xóa repository {DOCKER_USER}/{repo}")
+        elif resp.status_code == 404:
+            results[repo] = "not_found"
+        else:
+            results[repo] = f"error: HTTP {resp.status_code}"
+            write_log(app_name, f"⚠️ [DOCKER HUB] Không xóa được {DOCKER_USER}/{repo}: HTTP {resp.status_code} {resp.text[:150]}")
+    return results
+
+
 def delete_app(app_name: str):
     write_log(app_name, f"\n=== [BẮT ĐẦU XÓA DỰ ÁN] {app_name} ===")
     try:
@@ -741,27 +823,24 @@ def delete_app(app_name: str):
     except Exception as e:
         write_log(app_name, f"Lỗi phụ khi xóa K3s (bỏ qua): {e}")
 
+    repos = image_repositories(app_name)
     try:
         write_log(app_name, f"[2] Đang xóa Local Docker Image...")
-        # Mỗi lần build có một tag riêng => xóa mọi tag của repository image này
-        listed = subprocess.run(
-            ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}", f"{DOCKER_USER}/{app_name}"],
-            capture_output=True, text=True, check=False
-        )
-        local_tags = [t for t in listed.stdout.split() if t.strip()]
+        # Mỗi lần build có một tag riêng => xóa mọi tag của các repository image của app
+        local_tags = []
+        for repo in repos:
+            listed = subprocess.run(
+                ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}", f"{DOCKER_USER}/{repo}"],
+                capture_output=True, text=True, check=False
+            )
+            local_tags += [t for t in listed.stdout.split() if t.strip()]
         if local_tags:
             subprocess.run(["docker", "rmi", "-f", *local_tags], check=False, capture_output=True)
-    except Exception: pass
+    except Exception as e:
+        write_log(app_name, f"⚠️ Lỗi phụ khi xóa image local (bỏ qua): {e}")
 
-    try:
-        write_log(app_name, f"[3] Đang gọi API Docker Hub để xóa kho chứa...")
-        p1, p2, p3 = "hub", "docker", "com"
-        login_url = f"https://{p1}.{p2}.{p3}/v2/users/login/"
-        login_resp = requests.post(login_url, json={"username": DOCKER_USER, "password": DOCKER_PASSWORD})
-        if login_resp.status_code == 200:
-            token = login_resp.json().get("token")
-            requests.delete(f"https://{p1}.{p2}.{p3}/v2/repositories/{DOCKER_USER}/{app_name}/", headers={"Authorization": f"JWT {token}"})
-    except Exception: pass
+    write_log(app_name, f"[3] Đang gọi API Docker Hub để xóa kho chứa...")
+    delete_dockerhub_repos(app_name, repos)
 
     try:
         write_log(app_name, f"[4] Đang dọn dẹp mã nguồn trên VPS...")

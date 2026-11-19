@@ -406,6 +406,7 @@ def verify_deployment(app_name: str, workloads: List[str], error: Optional[str] 
         "suggestions": [str(x) for x in (ai or {}).get("suggestions", []) or []][:6],
         "analyzed_by": "hermes" if ai else "rule-based",
         "pipeline_error": redact_secrets(error) if error else None,
+        "note": old_version_note(snapshot) if error else None,
         "workloads": [
             {
                 "workload": w["workload"],
@@ -495,13 +496,30 @@ def revision_history(app_name: str, deployment: str) -> Optional[List[Dict[str, 
     return history
 
 
+def old_version_note(snapshot: List[Dict[str, Any]]) -> Optional[str]:
+    """
+    Pipeline lỗi trước khi bản mới lên K3s nhưng Deployment cũ vẫn Ready => web vẫn truy cập được.
+    Nói rõ để người dùng không hiểu nhầm "1/1 Ready" là bản vừa build.
+    """
+    running = [w for w in snapshot if w.get("found") and w.get("ready_replicas", 0) > 0]
+    if not running:
+        return None
+    revisions = ", ".join(
+        f"{w['workload']} revision {w['revision']}" if w.get("revision") else w["workload"] for w in running
+    )
+    return f"Ứng dụng vẫn truy cập được vì K3s giữ nguyên phiên bản trước đó ({revisions}). Bản vừa build chưa được triển khai."
+
+
 def format_report(report: Dict[str, Any]) -> str:
     lines = [
         "🩺 [HERMES VERIFIER] Kết quả kiểm tra tổng thể",
         f"   Trạng thái : {report['status_label']}",
     ]
+    old_version = " — phiên bản cũ" if report.get("note") else ""
     for w in report["workloads"]:
-        lines.append(f"   Workload   : {w['workload']} ({w['ready']} Ready)")
+        lines.append(f"   Workload   : {w['workload']} ({w['ready']} Ready{old_version})")
+    if report.get("note"):
+        lines.append(f"   Lưu ý      : {report['note']}")
     lines.append(f"   Đánh giá   : {report['summary']}")
     for e in report["evidence"]:
         lines.append(f"   Bằng chứng : - {e}")

@@ -223,3 +223,29 @@ def test_old_pods_terminating_after_rollout_do_not_count(paths, kube, monkeypatc
     old["status"]["containerStatuses"][0]["state"] = {"terminated": {"reason": "Error", "exitCode": 143}}
     kube.pods = {"app=shop": [pod("shop-new", ready=True), old]}
     assert hermes_verifier.finalize_pipeline("shop", ["deployment/shop"])
+
+
+def test_pipeline_error_with_old_version_still_running_says_so(paths, kube):
+    kube.workloads = {"deployment/shop": {
+        "metadata": {"annotations": {"deployment.kubernetes.io/revision": "4"}},
+        "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "shop"}}},
+        "status": {"readyReplicas": 1},
+    }}
+    ok = hermes_verifier.finalize_pipeline("shop", ["deployment/shop"], error="docker push failed")
+    assert not ok
+    report = json.loads((paths.logs / "shop.health.json").read_text())
+    assert "phiên bản trước đó" in report["note"] and "revision 4" in report["note"]
+    lines = log_lines(paths, "shop")
+    assert any("1/1 Ready — phiên bản cũ" in line for line in lines)
+    assert lines[-1] == "ERROR"
+
+
+def test_no_old_version_note_when_nothing_is_running(paths, kube):
+    kube.workloads = {"deployment/shop": None}
+    report = hermes_verifier.verify_deployment("shop", ["deployment/shop"], error="git clone failed")
+    assert report["note"] is None
+
+
+def test_healthy_deploy_has_no_old_version_note(paths, kube):
+    report = hermes_verifier.verify_deployment("shop", ["deployment/shop"])
+    assert report["note"] is None

@@ -155,3 +155,94 @@ def test_site_with_runtime_keeps_ai_config(tmp_path, paths, marker):
     (tmp_path / marker).write_text("")
     ai_toml = '[start]\ncmd = "npm start"'
     assert builder_core.resolve_nixpacks_toml(str(tmp_path), ai_toml, "app") == ai_toml
+
+
+def test_cmd_failure_shows_stdout_when_stderr_is_empty(paths):
+    import subprocess
+    script = "import sys; print('4c134b02cb7e: Waiting'); print('denied: requested access to the resource is denied'); sys.exit(1)"
+    with pytest.raises(Exception) as exc:
+        builder_core.run_cmd(["python3", "-c", script], "shop")
+    msg = str(exc.value)
+    assert "exit code 1" in msg
+    assert "denied: requested access" in msg
+    assert "Waiting" not in msg.split("Chi tiết lỗi:")[1]
+    assert "denied: requested access" in (paths.logs / "shop.log").read_text()
+
+
+def test_cmd_failure_killed_by_signal_is_explained():
+    import subprocess
+    e = subprocess.CalledProcessError(-9, ["docker", "push", "x"], output="", stderr="")
+    assert "tín hiệu 9" in builder_core.describe_cmd_failure(e)
+
+
+class FakeResp:
+    def __init__(self, status, data=None, text=""):
+        self.status_code, self._data, self.text = status, data or {}, text
+
+    def json(self):
+        return self._data
+
+
+@pytest.fixture
+def hub(monkeypatch):
+    """Giả lập Docker Hub API: ghi lại request, trả status theo repo"""
+    class Hub:
+        login = {"/auth/token": FakeResp(200, {"access_token": "tok"})}
+        delete_status = {}
+        deleted = []
+        headers = []
+
+    h = Hub()
+
+    def post(url, json=None, timeout=None):
+        for suffix, resp in h.login.items():
+            if suffix in url:
+                return resp
+        return FakeResp(401)
+
+    def delete(url, headers=None, timeout=None):
+        repo = url.rstrip("/").split("/")[-1]
+        h.deleted.append(repo)
+        h.headers.append(headers)
+        return FakeResp(h.delete_status.get(repo, 404))
+
+    monkeypatch.setattr(builder_core, "DOCKER_PASSWORD", "dckr_pat_x")
+    monkeypatch.setattr(builder_core.requests, "post", post)
+    monkeypatch.setattr(builder_core.requests, "delete", delete)
+    return h
+
+
+def test_dockerhub_deletes_all_repos_of_app(paths, hub):
+    hub.delete_status = {"shop": 202, "shop-be": 202}
+    res = builder_core.delete_dockerhub_repos("shop", builder_core.image_repositories("shop"))
+    assert res == {"shop": "deleted", "shop-be": "deleted", "shop-fe": "not_found"}
+    assert hub.headers[0] == {"Authorization": "Bearer tok"}
+    assert "Đã xóa repository tobi1008/shop" in (paths.logs / "shop.log").read_text()
+
+
+def test_dockerhub_falls_back_to_legacy_login(paths, hub):
+    hub.login = {"/users/login/": FakeResp(200, {"token": "old"})}
+    hub.delete_status = {"shop": 202}
+    assert builder_core.delete_dockerhub_repos("shop", ["shop"]) == {"shop": "deleted"}
+    assert hub.headers[0] == {"Authorization": "Bearer old"}
+
+
+def test_dockerhub_login_failure_is_logged_not_silent(paths, hub):
+    hub.login = {}
+    res = builder_core.delete_dockerhub_repos("shop", ["shop"])
+    assert res["shop"].startswith("error")
+    assert hub.deleted == []
+    assert "Đăng nhập Docker Hub thất bại" in (paths.logs / "shop.log").read_text()
+
+
+def test_dockerhub_delete_error_is_logged(paths, hub):
+    hub.delete_status = {"shop": 403}
+    assert builder_core.delete_dockerhub_repos("shop", ["shop"]) == {"shop": "error: HTTP 403"}
+    assert "HTTP 403" in (paths.logs / "shop.log").read_text()
+
+
+def test_dockerhub_without_password_warns(paths, hub, monkeypatch):
+    monkeypatch.setattr(builder_core, "DOCKER_PASSWORD", None)
+    builder_core.delete_dockerhub_repos("shop", ["shop"])
+    assert hub.deleted == []
+    assert "Chưa cấu hình DOCKER_PASSWORD" in (paths.logs / "shop.log").read_text()
