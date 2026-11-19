@@ -31,6 +31,7 @@ try:
     import archive_builder_core  # noqa: E402
     import builder_core  # noqa: E402
     import cicd_core  # noqa: E402
+    import dockerhub_cleanup  # noqa: E402
     import file_manager_api  # noqa: E402
     import hermes_agent_router  # noqa: E402
     import hermes_verifier  # noqa: E402

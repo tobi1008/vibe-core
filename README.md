@@ -85,6 +85,7 @@
 | [archive_builder_core.py](archive_builder_core.py) | Triển khai từ file nén; giải nén an toàn (chống Zip Slip / path traversal). |
 | [cicd_core.py](cicd_core.py) | CI/CD: cập nhật mã nguồn, build image theo phiên bản, rolling update trên K3s. |
 | [file_manager_api.py](file_manager_api.py) | Router `/api/project`: duyệt, đọc, ghi file trong workspace; push lên GitHub của người dùng. |
+| [dockerhub_cleanup.py](dockerhub_cleanup.py) | Dọn rác Docker Hub: tìm repo mồ côi và tag cũ, xem trước rồi mới xóa. |
 | [hermes_agent_router.py](hermes_agent_router.py) | Router `/api/ai-debug`: chẩn đoán lỗi bằng AI, thực thi hành động khắc phục, chat với AI. |
 | [builder.py](builder.py) | Bản prototype đầu tiên dạng script CLI, giữ lại để tham khảo quá trình phát triển; API không sử dụng. |
 | [cluster-issuer.yaml](cluster-issuer.yaml) | `ClusterIssuer` Let's Encrypt cho cert-manager (HTTP-01 qua Traefik). |
@@ -219,6 +220,22 @@ curl -X POST http://localhost:8080/api/deploy \
 curl -H "X-API-Key: $VIBE_API_KEY" http://localhost:8080/api/logs/my-app
 ```
 
+### Dọn rác Docker Hub
+
+| Method | Endpoint | Mô tả |
+|---|---|---|
+| GET | `/api/dockerhub/cleanup` | Xem trước, không xóa gì: `orphan_repos` (repo không workload nào trên K3s dùng và không thuộc app nào còn trên panel), `old_tags` (tag cũ trong repo đang dùng) |
+| POST | `/api/dockerhub/cleanup` | Xóa các mục đã chọn từ bản xem trước: `{"repos": [...], "tags": {"repo": ["tag", ...]}}`. Mục không còn trong kế hoạch tính lại lúc xóa sẽ bị từ chối (`refused`) |
+
+Không bao giờ xóa: repo trong `DOCKERHUB_PROTECTED_REPOS`; tag đang được K3s tham chiếu (kể cả ReplicaSet cũ dùng để rollback); `DOCKERHUB_KEEP_TAGS` tag mới nhất của mỗi repo; repo / tag vừa cập nhật trong `DOCKERHUB_GRACE_HOURS` giờ. Không đọc được K3s thì không xóa gì. Kết quả xóa ghi ở log `dockerhub-cleanup`.
+
+```bash
+curl -H "X-API-Key: $VIBE_API_KEY" http://localhost:8080/api/dockerhub/cleanup
+curl -X POST -H "X-API-Key: $VIBE_API_KEY" -H "Content-Type: application/json" \
+  -d '{"repos": ["old-app"], "tags": {"shop": ["1795000000"]}}' \
+  http://localhost:8080/api/dockerhub/cleanup
+```
+
 ### File Manager và Git (prefix `/api/project`)
 
 | Method | Endpoint | Mô tả |
@@ -296,7 +313,10 @@ Tạo file `.env` trong thư mục gốc của dự án. File này đã nằm tr
 | `VIBE_API_KEY` | Có | Khoá API mà client phải gửi trong header `X-API-Key`. Tạo bằng `openssl rand -hex 32`. |
 | `MAX_UPLOAD_MB` | Không | Dung lượng tối đa (MB) của một request upload file nén. Mặc định `500`. Nếu có nginx phía trước, `client_max_body_size` cũng phải lớn hơn mức này. |
 | `GITHUB_WEBHOOK_SECRET` | Khuyến nghị | Secret để xác minh webhook GitHub; phải trùng với giá trị cấu hình ở frontend. Nếu để trống, webhook không được xác minh chữ ký. |
-| `DOCKER_PASSWORD` | Khuyến nghị | Token Docker Hub, dùng để xoá image khi xoá app. |
+| `DOCKER_PASSWORD` | Khuyến nghị | Personal Access Token Docker Hub có quyền **Read, Write, Delete**, dùng để xoá image khi xoá app và dọn rác Docker Hub. |
+| `DOCKERHUB_PROTECTED_REPOS` | Khuyến nghị | Các repo Docker Hub không do Vibe Hosting tạo, cách nhau bởi dấu phẩy (vd `my-blog,vibe-core`). Công cụ dọn rác không bao giờ đụng tới. |
+| `DOCKERHUB_KEEP_TAGS` | Không | Số tag mới nhất luôn giữ lại trong mỗi repo khi dọn rác. Mặc định `3`. |
+| `DOCKERHUB_GRACE_HOURS` | Không | Bỏ qua repo / tag vừa cập nhật trong số giờ này (pipeline có thể đang push). Mặc định `1`. |
 | `HERMES_API_URL` | Không | Endpoint của Hermes. Mặc định `http://127.0.0.1:8645/v1/chat/completions`. |
 | `INTERNAL_BEARER_TOKEN` | Không | Bearer token gửi tới Hermes. |
 | `AGY_BIN_PATH`, `CLAUDE_BIN_PATH` | Không | Đường dẫn tới CLI nếu không nằm trong `PATH`. |

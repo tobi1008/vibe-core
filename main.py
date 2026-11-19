@@ -2,7 +2,7 @@ import os
 import json
 import shutil
 import subprocess
-from typing import Optional
+from typing import Dict, List, Optional
 from fastapi import FastAPI, BackgroundTasks, Request, HTTPException, UploadFile, File, Form, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -13,6 +13,7 @@ from cicd_core import redeploy_app
 from db_builder_core import deploy_app_with_db, deploy_fullstack_app, delete_app_db_resources
 from monorepo_builder_core import deploy_monorepo_app
 from hermes_verifier import verify_deployment, discover_workloads, load_report, revision_history
+import dockerhub_cleanup
 from fastapi.responses import JSONResponse
 from security import require_api_key, require_upload_scope, UPLOAD_TOKEN_PATHS, MAX_UPLOAD_BYTES, validate_app_name, validate_repo_url, verify_github_signature, redact_secrets, safe_upload_filename
 try:
@@ -752,6 +753,29 @@ def trigger_health_check(app_name: str, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=404, detail=f"Không tìm thấy Deployment/StatefulSet nào của {app_name} trên K3s.")
     background_tasks.add_task(verify_deployment, app_name, workloads)
     return {"status": "success", "message": f"Hermes đang kiểm tra {len(workloads)} workload của {app_name}.", "workloads": workloads}
+
+
+class DockerHubCleanupRequest(BaseModel):
+    repos: List[str] = []
+    tags: Dict[str, List[str]] = {}
+
+
+@app.get("/api/dockerhub/cleanup")
+def preview_dockerhub_cleanup():
+    """Xem trước các repo mồ côi và tag cũ trên Docker Hub sẽ bị xóa (không xóa gì)"""
+    try:
+        return {"status": "success", "plan": dockerhub_cleanup.build_plan()}
+    except dockerhub_cleanup.CleanupError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/api/dockerhub/cleanup")
+def run_dockerhub_cleanup(payload: DockerHubCleanupRequest):
+    """Xóa các mục đã chọn từ bản xem trước; mục không còn trong kế hoạch hiện tại sẽ bị từ chối"""
+    try:
+        return {"status": "success", "result": dockerhub_cleanup.execute(payload.repos, payload.tags)}
+    except dockerhub_cleanup.CleanupError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.get("/api/apps/{app_name}/history")
