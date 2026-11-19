@@ -612,8 +612,11 @@ def purge_app_workspace_and_configs(app_name: str):
         if os.path.exists(CONFIG_DB_FILE):
             with open(CONFIG_DB_FILE, "r", encoding="utf-8") as f:
                 cfg_data = json.load(f)
-            if app_name in cfg_data:
-                del cfg_data[app_name]
+            # Gồm cả biến thể fullstack / monorepo, nếu sót lại sẽ khiến dọn rác Docker Hub tưởng app vẫn còn
+            keys = [k for k in (app_name, f"{app_name}-be", f"{app_name}-fe", f"{app_name}-monorepo") if k in cfg_data]
+            if keys:
+                for k in keys:
+                    del cfg_data[k]
                 with open(CONFIG_DB_FILE, "w", encoding="utf-8") as f:
                     json.dump(cfg_data, f, indent=2, ensure_ascii=False)
     except Exception:

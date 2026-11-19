@@ -358,3 +358,15 @@ def test_verify_endpoint_discovers_workloads(client, kube, paths):
 
 def test_verify_endpoint_404_without_workloads(client):
     assert client.post("/api/apps/shop/verify").status_code == 404
+
+
+def test_purge_deletes_dockerhub_repos_and_all_config_variants(paths, monkeypatch):
+    import builder_core
+    paths.config.write_text(json.dumps({"shop": {}, "shop-be": {}, "shop-fe": {}, "shop-monorepo": {}, "other": {}}))
+    deleted = []
+    monkeypatch.setattr(main, "delete_app_db_resources", lambda name: None)
+    monkeypatch.setattr(builder_core.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, "", ""))
+    monkeypatch.setattr(builder_core, "delete_dockerhub_repos", lambda app, repos: deleted.append((app, repos)))
+    main.purge_app_workspace_and_configs("shop")
+    assert deleted == [("shop", ["shop", "shop-be", "shop-fe"])]
+    assert json.loads(paths.config.read_text()) == {"other": {}}
