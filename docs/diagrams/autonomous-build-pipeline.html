@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>Autonomous Build Pipeline</title>
+<style>
+  :root {
+    --bg: #0b1736; --card: #13234a; --card2: #1a2d5c; --text: #e8eefc; --muted: #b4c0dc; --dim: #8796b8;
+    --cyan: #3fd0e8; --orange: #f4b042; --blue: #4aa3f0; --purple: #a98bf5; --yellow: #f5d742; --green: #6fdc78;
+    --red: #f2776f; --hermes: #7f9cf5; --mono: "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  #canvas { position: relative; width: 2000px; padding: 44px 50px 50px; }
+  svg#wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+
+  h1 { text-align: center; font-size: 50px; letter-spacing: 2px; font-weight: 800; }
+  .sub { text-align: center; color: var(--cyan); font-size: 21px; margin-top: 14px; }
+  .rule { width: 720px; height: 3px; background: var(--cyan); margin: 26px auto 34px; opacity: .8; }
+
+  .section-label { font-size: 15px; letter-spacing: 3px; font-weight: 700; color: var(--dim); margin: 0 0 14px 4px; }
+
+  .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 52px; margin-right: 70px; }
+  .row + .row { margin-top: 46px; }
+  .box { position: relative; background: var(--card); border: 2.5px solid var(--c); border-radius: 18px; padding: 20px 22px 22px; min-height: 196px; }
+  .box.dashed { border-style: dashed; background: #3a2c10; }
+  .head { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+  .num { flex: none; width: 58px; height: 58px; border-radius: 50%; background: var(--c); color: #0b1736; display: grid; place-items: center; font-weight: 800; font-size: 19px; }
+  .title { font-size: 23px; font-weight: 700; line-height: 1.2; }
+  .box.dashed .title { color: var(--orange); }
+  .body { color: var(--muted); font-size: 17.5px; line-height: 1.55; }
+  code, .m { font-family: var(--mono); font-size: .9em; color: #d6e2ff; }
+  .fix { color: var(--yellow); font-weight: 600; }
+
+  .lane-note { font-size: 17px; color: var(--red); margin: 30px 70px 0 0; text-align: right; }
+
+  /* ---------- Hermes ---------- */
+  #hermes { margin-top: 56px; border: 3px solid var(--hermes); border-radius: 22px; background: #142a63; padding: 26px 30px 30px; }
+  .hhead { display: flex; align-items: center; gap: 18px; }
+  .hhead .num { --c: var(--hermes); width: 70px; height: 70px; font-size: 24px; }
+  .htitle { font-size: 30px; font-weight: 800; }
+  .hsub { color: var(--muted); font-size: 18px; margin-top: 4px; }
+  .hsub b { color: var(--text); }
+
+  .perm { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 20px; }
+  .perm div { border-radius: 12px; padding: 12px 18px; font-size: 16.5px; line-height: 1.5; color: var(--muted); }
+  .perm .ok { background: rgba(111,220,120,.10); border: 1.5px solid rgba(111,220,120,.55); }
+  .perm .no { background: rgba(242,119,111,.10); border: 1.5px solid rgba(242,119,111,.55); }
+  .perm strong { color: var(--text); margin-right: 6px; }
+
+  .entries { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 26px; margin-right: 70px; }
+  .entry { border-radius: 12px; padding: 12px 18px; font-size: 16.5px; line-height: 1.45; color: var(--muted); background: #0f1f48; border: 1.5px solid var(--ec); }
+  .entry .t { color: var(--ec); font-weight: 700; font-size: 17px; display: block; margin-bottom: 3px; }
+
+  .hgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 46px; margin-top: 30px; }
+  .hgrid + .hgrid { margin-top: 46px; }
+  .stage { position: relative; background: var(--card2); border: 1.5px solid rgba(127,156,245,.55); border-radius: 14px; padding: 18px 22px 20px; }
+  .stage .st { display: flex; gap: 12px; align-items: baseline; font-size: 21px; font-weight: 700; margin-bottom: 10px; }
+  .stage .st .k { flex: none; font-family: var(--mono); font-size: 15px; color: #0b1736; background: var(--hermes); border-radius: 6px; padding: 2px 8px; }
+  .stage .fn { font-family: var(--mono); font-size: 14px; color: var(--dim); margin: -4px 0 10px; }
+  .stage ul { list-style: none; color: var(--muted); font-size: 16.5px; line-height: 1.55; }
+  .stage li { padding-left: 16px; position: relative; }
+  .stage li::before { content: "•"; position: absolute; left: 0; color: var(--hermes); }
+  .stage.ai { border: 2px solid var(--purple); background: #251d55; }
+  .stage.ai .st .k { background: var(--purple); }
+  .stage.core { border: 2px solid var(--yellow); }
+  .stage.core .st .k { background: var(--yellow); }
+  .tag { display: inline-block; font-size: 13.5px; font-weight: 700; border-radius: 6px; padding: 1px 7px; margin-left: 4px; vertical-align: 2px; }
+  .tag.skip { background: rgba(242,119,111,.18); color: var(--red); }
+  .tag.ai { background: rgba(169,139,245,.22); color: #cdb9ff; }
+  .rule-tbl { width: 100%; border-collapse: collapse; font-size: 15.5px; color: var(--muted); margin-top: 4px; }
+  .rule-tbl td { padding: 5px 6px; border-top: 1px solid rgba(255,255,255,.08); vertical-align: top; }
+  .rule-tbl td:first-child { color: var(--text); font-family: var(--mono); font-size: 14px; white-space: nowrap; }
+  .stat { font-family: var(--mono); font-size: 13.5px; padding: 1px 6px; border-radius: 5px; background: rgba(255,255,255,.08); color: #d6e2ff; white-space: nowrap; }
+
+  .gate { margin: 52px auto 0; width: 820px; text-align: center; border: 2px solid var(--yellow); border-radius: 14px; background: #2a2a1a; padding: 14px 20px; }
+  .gate .t { font-size: 21px; font-weight: 700; color: var(--yellow); }
+  .gate .d { font-size: 16.5px; color: var(--muted); margin-top: 4px; }
+
+  .ends { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 70px; }
+  .end { border-radius: 18px; padding: 24px; text-align: center; border: 2.5px solid var(--ec); background: var(--eb); }
+  .end .t { font-size: 30px; font-weight: 800; color: var(--ec); letter-spacing: .5px; }
+  .end .d { font-size: 18px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+
+  .consumers { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 46px; margin-top: 40px; }
+  .cons { border: 1.5px dashed rgba(127,156,245,.6); border-radius: 12px; padding: 12px 18px; font-size: 16px; color: var(--muted); line-height: 1.45; }
+  .cons .t { color: var(--hermes); font-weight: 700; display: block; font-size: 17px; margin-bottom: 2px; }
+
+  .wire-label { position: absolute; font-size: 16px; font-weight: 600; white-space: nowrap; }
+  .vlabel { position: absolute; writing-mode: vertical-rl; transform: rotate(180deg); font-size: 16px; font-weight: 700; letter-spacing: 1.5px; color: var(--red); white-space: nowrap; }
+  .foot { margin-top: 28px; color: var(--dim); font-size: 14.5px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="canvas">
+  <svg id="wires"></svg>
+
+  <h1>AUTONOMOUS BUILD PIPELINE</h1>
+  <div class="sub">builder_core.py · hermes_verifier.py · Vibe Core — đóng gói, triển khai &amp; kiểm tra hoàn toàn tự động</div>
+  <div class="rule"></div>
+
+  <div class="section-label">PHẦN A · PIPELINE TRIỂN KHAI (deploy_app)</div>
+  <div class="row">
+    <div class="box" id="s1" style="--c:var(--cyan)">
+      <div class="head"><div class="num">1</div><div class="title">Clone mã nguồn</div></div>
+      <div class="body">Git clone repo vào workspace riêng:<br><code>/opt/vibe-hosting/<br>workspaces/&lt;app&gt;</code></div>
+    </div>
+    <div class="box dashed" id="s15" style="--c:var(--orange)">
+      <div class="head"><div class="num">1.5</div><div class="title">Python Auto-Heal</div></div>
+      <div class="body">Thay <code>127.0.0.1</code> / <code>"localhost"</code> → <code>0.0.0.0</code> trong file .js .ts .py .json — sửa sẵn lỗi lắng nghe mạng</div>
+    </div>
+    <div class="box" id="s2" style="--c:var(--blue)">
+      <div class="head"><div class="num">2</div><div class="title">Quét mã nguồn<br>&amp; cấu hình</div></div>
+      <div class="body">Cây thư mục (<code>tree -L 3</code>) + file lõi (package.json, requirements.txt, server.js…) → ngữ cảnh ≤ 30.000 ký tự</div>
+    </div>
+    <div class="box" id="s3" style="--c:var(--purple)">
+      <div class="head"><div class="num">3</div><div class="title">AI sinh cấu hình<br>triển khai</div></div>
+      <div class="body">Antigravity (mặc định) · Claude Code → JSON: <code>nixpacks.toml</code> + Deployment · Service · Ingress + <code>auto_patches</code></div>
+    </div>
+  </div>
+  <div class="row">
+    <div class="box" id="s7" style="--c:var(--cyan)">
+      <div class="head"><div class="num">7</div><div class="title">Triển khai lên K3s</div></div>
+      <div class="body"><code>kubectl apply</code>: Deployment · Service · Ingress (Traefik + cert-manager SSL) vào namespace <code>default</code></div>
+    </div>
+    <div class="box" id="s6" style="--c:var(--green)">
+      <div class="head"><div class="num">6</div><div class="title">Đẩy lên Docker Hub</div></div>
+      <div class="body"><code>docker push</code> — đưa image lên registry để cụm K3s kéo về (qua <code>imagePullSecrets: regcred</code>)</div>
+    </div>
+    <div class="box" id="s5" style="--c:var(--yellow)">
+      <div class="head"><div class="num">5</div><div class="title">Build bằng Nixpacks</div></div>
+      <div class="body">Đóng gói thành OCI image:<br><code>tobi1008/&lt;app&gt;:<span class="fix">&lt;timestamp&gt;</span></code><br>mỗi lần build một tag → rollback đúng bản</div>
+    </div>
+    <div class="box" id="s4" style="--c:var(--orange)">
+      <div class="head"><div class="num">4</div><div class="title">Ghi cấu hình &amp;<br>Auto-patches</div></div>
+      <div class="body">Vá file theo <code>auto_patches</code> (chỉ trong workspace — <code>safe_join</code>); web tĩnh → ép dùng nginx của Nixpacks; ghi <code>k8s/*.yaml</code></div>
+    </div>
+  </div>
+
+  <div class="lane-note" id="errnote">Lỗi ở BẤT KỲ bước 1–7 nào (except) → vẫn chuyển tới bước 8 với <code>error=&lt;lỗi&gt;</code> để Hermes chẩn đoán</div>
+
+  <!-- ===================== HERMES ===================== -->
+  <div class="section-label" style="margin-top:56px">CỔNG VÀO BƯỚC 8</div>
+  <div class="entries">
+      <div class="entry" id="e1" style="--ec:var(--green)"><span class="t">① Pipeline thành công tới bước 7</span><code>finalize_pipeline(app, workloads)</code> — error = None</div>
+      <div class="entry" id="e2" style="--ec:var(--red)"><span class="t">② Pipeline lỗi ở bước 1–7</span><code>finalize_pipeline(app, workloads, error=…)</code> — <b style="color:var(--red)">bỏ qua H1</b>, chẩn đoán từ log build</div>
+      <div class="entry" id="e3" style="--ec:var(--hermes)"><span class="t">③ Người dùng bấm kiểm tra lại</span><code>POST /api/apps/{app}/verify</code> → <code>discover_workloads()</code> → <code>verify_deployment()</code> (chạy nền)</div>
+    </div>
+
+  <div id="hermes">
+    <div class="hhead">
+      <div class="num">8</div>
+      <div>
+        <div class="htitle">Hermes Verifier — AI Agent kiểm tra tổng thể <span style="color:var(--dim);font-weight:500;font-size:20px">(hermes_verifier.py)</span></div>
+        <div class="hsub">Bước cuối của <b>cả 6 pipeline</b> (Deploy · CI/CD webhook · Monorepo · Database · CMS · Upload file nén), gọi qua <code>finalize_pipeline()</code>. Hermes <b>quan sát và giải thích</b>; trạng thái thật của K3s mới là thứ quyết định DONE / ERROR.</div>
+      </div>
+    </div>
+
+    <div class="perm">
+      <div class="ok"><strong>✔ Được phép (read-only):</strong> <code>kubectl get · rollout status · logs · get events</code>, đọc log build, gọi LLM qua Hermes API gateway, ghi file báo cáo JSON.</div>
+      <div class="no"><strong>✘ Không được:</strong> sửa mã nguồn, <code>kubectl apply/delete</code>, build lại, đề xuất lệnh để hệ thống tự chạy, tự quyết định DONE.</div>
+    </div>
+
+    <div class="hgrid">
+      <div class="stage" id="h1">
+        <div class="st"><span class="k">H1</span>Chờ rollout &amp; ổn định <span class="tag skip">bỏ qua khi ②</span></div>
+        <div class="fn">wait_for_rollout() · wait_for_stability()</div>
+        <ul>
+          <li><code>kubectl rollout status</code> mỗi 15s, tối đa 600s (đủ cho lần đầu kéo image lớn)</li>
+          <li>Pod đang <i>ContainerCreating</i> → chờ tiếp</li>
+          <li>Gặp <i>ImagePullBackOff, ErrImagePull, CrashLoopBackOff, CreateContainerConfigError…</i> → <b>dừng sớm</b></li>
+          <li>Rollout xong → <b>chờ thêm 20s</b>: container restart / crash / số Pod Ready tụt → coi là <b>không ổn định</b></li>
+        </ul>
+      </div>
+      <div class="stage" id="h2">
+        <div class="st"><span class="k">H2</span>Thu thập bằng chứng</div>
+        <div class="fn">collect_workload() · collect_events() · read_build_log_tail()</div>
+        <ul>
+          <li>Workload: replicas / readyReplicas, revision hiện tại</li>
+          <li>Từng Pod: phase, condition chưa True, trạng thái container, số lần restart, lần terminated trước</li>
+          <li>Log container (60 dòng cuối) + log lần crash trước (<code>--previous</code>), đã che secret</li>
+          <li>20 sự kiện K3s gần nhất của app · 80 dòng cuối log build (lọc dòng tiến trình docker)</li>
+        </ul>
+      </div>
+      <div class="stage core" id="h3">
+        <div class="st"><span class="k">H3</span>Phân loại theo luật (không cần AI)</div>
+        <div class="fn">classify() → fallback_status</div>
+        <table class="rule-tbl">
+          <tr><td>có error</td><td><span class="stat">pipeline_error</span></td></tr>
+          <tr><td>workload không tồn tại / ImagePull / ConfigError / Pod không được xếp lịch</td><td><span class="stat">k8s_config_error</span></td></tr>
+          <tr><td>CrashLoopBackOff / Error / OOMKilled</td><td><span class="stat">code_error</span></td></tr>
+          <tr><td>mọi Pod Ready</td><td><span class="stat">healthy</span></td></tr>
+          <tr><td>còn lại</td><td><span class="stat">starting</span></td></tr>
+        </table>
+        <div style="color:var(--dim);font-size:15px;margin-top:8px">Kết luận dự phòng khi Hermes không phản hồi hoặc trả lời sai.</div>
+      </div>
+    </div>
+
+    <div class="hgrid">
+      <div class="stage" id="h6">
+        <div class="st"><span class="k">H6</span>Ghi báo cáo &amp; lịch sử</div>
+        <div class="fn">format_report() · record_revision_verdicts()</div>
+        <ul>
+          <li>In báo cáo vào log build: trạng thái, workload Ready x/y, đánh giá, bằng chứng, gợi ý, <i>phân tích bởi hermes / rule-based</i></li>
+          <li><code>logs/&lt;app&gt;.health.json</code> — báo cáo đầy đủ</li>
+          <li><code>logs/&lt;app&gt;.revisions.json</code> — kết luận cho từng revision <span class="tag skip">không ghi khi ②</span> (revision trên K3s lúc đó là bản cũ)</li>
+        </ul>
+      </div>
+      <div class="stage core" id="h5">
+        <div class="st"><span class="k">H5</span>Hợp nhất kết luận — K3s là căn cứ cuối</div>
+        <div class="fn">verify_deployment()</div>
+        <ul>
+          <li><b>ready</b> = có workload ∧ không có error ∧ mọi rollout ở H1 đều Ready</li>
+          <li>ready → <span class="stat">healthy</span> (bất kể AI nói gì)</li>
+          <li>chưa ready + AI trả status hợp lệ → dùng status của AI <i>(AI chỉ tinh chỉnh tầng lỗi)</i></li>
+          <li>ngược lại → dùng <span class="stat">fallback_status</span> của H3; nếu H3 ra healthy mà chưa ổn định → hạ về <span class="stat">starting</span></li>
+          <li><b>AI không thể biến lỗi thành healthy</b></li>
+        </ul>
+      </div>
+      <div class="stage ai" id="h4">
+        <div class="st"><span class="k">H4</span>Hỏi Hermes LLM <span class="tag ai">AI</span></div>
+        <div class="fn">ask_hermes() → run_hermes_json()</div>
+        <ul>
+          <li>Prompt = kết quả H1 + snapshot H2 + phân loại sơ bộ H3, yêu cầu “chỉ dựa vào bằng chứng”</li>
+          <li>Hermes API gateway (OpenAI-compatible), thử lần lượt <b>tối đa 3 model mã nguồn mở</b>, mỗi model 45s, đổi model khi 429 / lỗi</li>
+          <li>Chỉ được chọn status trong danh sách cho phép:<br>② → <span class="stat">build_error</span> <span class="stat">pipeline_error</span> <span class="stat">k8s_config_error</span> <span class="stat">code_error</span><br>①③ → <span class="stat">code_error</span> <span class="stat">k8s_config_error</span> <span class="stat">starting</span> <span class="stat">healthy</span></li>
+          <li>Trả JSON: <code>status · summary · evidence[] · suggestions[]</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="consumers">
+      <div class="cons" id="c1"><span class="t">Log build (Frontend theo dõi realtime)</span>Báo cáo Hermes hiện ngay trên log, trước dòng DONE / ERROR</div>
+      <div class="cons" id="c2"><span class="t">Tab Hermes Check</span><code>GET /api/apps/{app}/health-report</code> đọc <code>.health.json</code></div>
+      <div class="cons" id="c3"><span class="t">Tab Lịch sử triển khai</span><code>GET /api/apps/{app}/history</code>: ReplicaSet thật trên K3s + <code>.revisions.json</code> → đang chạy / lỗi / đang khởi động / bản cũ</div>
+    </div>
+  </div>
+
+  <div class="gate" id="gate">
+    <div class="t">finalize_pipeline(): ready ?</div>
+    <div class="d">Chỉ <b>ready</b> của H5 quyết định dòng kết thúc ghi cho Frontend (luồng ③ không ghi DONE/ERROR)</div>
+  </div>
+
+  <div class="ends">
+    <div class="end" id="done" style="--ec:var(--green);--eb:#123d2a">
+      <div class="t">DONE · ỨNG DỤNG ONLINE</div>
+      <div class="d">Ghi dòng “HOÀN TẤT” + <code>DONE</code> — truy cập qua domain công khai, Traefik Ingress + SSL</div>
+    </div>
+    <div class="end" id="err" style="--ec:var(--red);--eb:#3b1a22">
+      <div class="t">ERROR · BÁO CÁO LỖI CHO NGƯỜI DÙNG</div>
+      <div class="d">Ghi “THẤT BẠI… xem báo cáo Hermes” + <code>ERROR</code> — chỉ rõ tầng lỗi (mã nguồn / cấu hình K3s / build / pipeline) kèm bằng chứng &amp; gợi ý sửa</div>
+    </div>
+  </div>
+
+  <div class="foot">Tham số mặc định: VERIFY_ROLLOUT_TIMEOUT = 600s · VERIFY_STABILITY_SECONDS = 20s · HERMES_VERIFY_TIMEOUT = 45s · HERMES_VERIFY = 1 (tắt AI → chỉ dùng rule-based ở H3)</div>
+</div>
+
+<script>
+const svg = document.getElementById('wires');
+const canvas = document.getElementById('canvas');
+const NS = 'http://www.w3.org/2000/svg';
+const colors = { cyan:'#3fd0e8', red:'#f2776f', green:'#6fdc78', hermes:'#9fb4ff', purple:'#a98bf5', yellow:'#f5d742' };
+
+function defs() {
+  const d = document.createElementNS(NS, 'defs');
+  for (const [k, c] of Object.entries(colors)) {
+    d.innerHTML += `<marker id="ah-${k}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${c}"/></marker>`;
+  }
+  svg.appendChild(d);
+}
+function r(id) {
+  const e = document.getElementById(id).getBoundingClientRect(), c = canvas.getBoundingClientRect();
+  return { l: e.left - c.left, t: e.top - c.top, r: e.right - c.left, b: e.bottom - c.top,
+           cx: (e.left + e.right) / 2 - c.left, cy: (e.top + e.bottom) / 2 - c.top };
+}
+function path(pts, color = 'cyan', dashed = false, w = 2.5) {
+  const p = document.createElementNS(NS, 'path');
+  p.setAttribute('d', 'M' + pts.map(q => q.join(',')).join(' L'));
+  p.setAttribute('fill', 'none');
+  p.setAttribute('stroke', colors[color]);
+  p.setAttribute('stroke-width', w);
+  if (dashed) p.setAttribute('stroke-dasharray', '9 7');
+  p.setAttribute('marker-end', `url(#ah-${color})`);
+  svg.appendChild(p);
+}
+function label(text, x, y, color, cls = 'wire-label') {
+  const d = document.createElement('div');
+  d.className = cls; d.textContent = text; d.style.left = x + 'px'; d.style.top = y + 'px'; d.style.color = colors[color] || color;
+  canvas.appendChild(d); return d;
+}
+const G = 6;
+function h(a, b, color) { const A = r(a), B = r(b); const y = A.cy;
+  if (A.r < B.l) path([[A.r + G, y], [B.l - G, y]], color); else path([[A.l - G, y], [B.r + G, y]], color); }
+function v(a, b, color, x) { const A = r(a), B = r(b); x = x ?? A.cx; path([[x, A.b + G], [x, B.t - G]], color); }
+
+defs();
+// Phần A
+h('s1', 's15'); h('s15', 's2'); h('s2', 's3'); v('s3', 's4');
+h('s4', 's5'); h('s5', 's6'); h('s6', 's7');
+
+// Vòng lặp sửa lỗi: build lỗi (5) -> AI (3)
+{ const S5 = r('s5'), S3 = r('s3'), S4 = r('s4'); const xr = S4.r + 40, ymid = (S3.b + S4.t) / 2 + 2;
+  path([[S5.cx, S5.t - G], [S5.cx, ymid], [xr, ymid], [xr, S3.cy], [S3.r + G, S3.cy]], 'red');
+  const lb = label('BUILD / JSON LỖI → TRẢ LOG CHO AI SỬA LẠI · TỐI ĐA 3 LẦN', 0, 0, 'red', 'vlabel');
+  lb.style.left = (xr + 10) + 'px'; lb.style.top = (S3.cy - 10) + 'px'; }
+
+// 7 -> entry ①
+{ const S7 = r('s7'), E1 = r('e1'); path([[S7.cx, S7.b + G], [S7.cx, E1.t - G]], 'green');
+  label('kubectl apply thành công', S7.cx + 12, S7.b + 40, 'green'); }
+// Lỗi bất kỳ -> entry ②
+{ const N = r('errnote'), E2 = r('e2'); path([[E2.cx, N.b + 6], [E2.cx, E2.t - G]], 'red', true); }
+// Entry -> Hermes
+{ const E1 = r('e1'), E2 = r('e2'), E3 = r('e3'), HM = r('hermes');
+  path([[E1.cx, E1.b + G], [E1.cx, HM.t - G]], 'green');
+  path([[E2.cx, E2.b + G], [E2.cx, HM.t - G]], 'red', true);
+  path([[E3.cx, E3.b + G], [E3.cx, HM.t - G]], 'hermes');
+  label('vào H1', E1.cx + 12, E1.b + 12, 'green');
+  label('bỏ qua H1, vào thẳng H2', E2.cx + 12, E2.b + 12, 'red');
+  label('vào H1 (không ghi DONE/ERROR)', E3.cx + 12, E3.b + 12, 'hermes'); }
+
+h('h1', 'h2', 'hermes'); h('h2', 'h3', 'hermes');
+v('h3', 'h4', 'hermes');
+h('h4', 'h5', 'purple'); h('h5', 'h6', 'hermes');
+// H3 -> H5 (fallback)
+{ const H3 = r('h3'), H5 = r('h5'); const x = H5.cx + 160;
+  path([[H3.l + 40, H3.b + G], [H3.l + 40, H3.b + 22], [x, H3.b + 22], [x, H5.t - G]], 'yellow', true);
+  label('fallback_status', x + 10, H3.b + 4, 'yellow'); }
+
+// H6 -> consumers (bus)
+{ const H6 = r('h6'), C1 = r('c1'), C3 = r('c3'); const y = H6.b + 17;
+  const p = document.createElementNS(NS, 'path');
+  p.setAttribute('d', `M${H6.cx},${H6.b + G} L${H6.cx},${y} M${C1.cx},${y} L${C3.cx},${y}`);
+  p.setAttribute('stroke', colors.hermes); p.setAttribute('stroke-width', 2.5); p.setAttribute('fill', 'none'); svg.appendChild(p);
+  for (const id of ['c1', 'c2', 'c3']) { const C = r(id); path([[C.cx, y], [C.cx, C.t - G]], 'hermes'); } }
+
+// Hermes -> gate -> ends
+{ const HM = r('hermes'), GT = r('gate'), D = r('done'), E = r('err');
+  path([[GT.cx, HM.b + G], [GT.cx, GT.t - G]], 'yellow');
+  const y = GT.cy;
+  path([[GT.l - G, y], [D.cx, y], [D.cx, D.t - G]], 'green');
+  path([[GT.r + G, y], [E.cx, y], [E.cx, E.t - G]], 'red');
+  label('ready = True', D.cx + 12, D.t - 34, 'green');
+  label('ready = False (kể cả pipeline lỗi)', E.cx + 12, E.t - 34, 'red'); }
+</script>
+</body>
+</html>
