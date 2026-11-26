@@ -2,6 +2,7 @@ import os
 import json
 import shutil
 import subprocess
+from contextlib import asynccontextmanager
 from typing import Dict, List, Optional
 from fastapi import FastAPI, BackgroundTasks, Request, HTTPException, UploadFile, File, Form, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,7 +38,25 @@ try:
 except Exception as e:
     hermes_agent_router = None
 
-app = FastAPI(title="Vibe Hosting API", version="2.4.0", dependencies=[Depends(require_api_key)])
+# Nạp Hermes Butler (bot Telegram + giám sát tự động) an toàn, lỗi không kéo sập API
+try:
+    import telegram_api
+except Exception as e:
+    print(f"⚠️ Không nạp được Hermes Butler: {e}")
+    telegram_api = None
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Bot và giám sát chỉ chạy khi máy chủ có TELEGRAM_BOT_TOKEN
+    if telegram_api:
+        telegram_api.start_background_services()
+    yield
+    if telegram_api:
+        telegram_api.stop_background_services()
+
+
+app = FastAPI(title="Vibe Hosting API", version="2.4.0", dependencies=[Depends(require_api_key)], lifespan=lifespan)
 
 
 # Khai báo trước CORSMiddleware để CORS bọc ngoài: trình duyệt đọc được lỗi 413 thay vì báo lỗi mạng
@@ -74,6 +93,10 @@ if file_manager_router:
 
 if hermes_agent_router:
     app.include_router(hermes_agent_router)
+
+# Hermes Butler: API liên kết Telegram (bot và giám sát được khởi động trong lifespan)
+if telegram_api:
+    app.include_router(telegram_api.router)
 
 @app.get("/api/ai-providers")
 def get_ai_providers():

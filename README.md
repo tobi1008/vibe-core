@@ -264,6 +264,23 @@ Các hành động khắc phục được ưu tiên theo nguyên tắc **sửa h
 
 Khi có `edit_file` và người dùng cung cấp GitHub token, bản sửa được tự động push lên repo của họ.
 
+### Hermes Butler: quản gia hệ thống qua Telegram (prefix `/api/telegram`)
+
+Người dùng liên kết Telegram ở trang hồ sơ của Vibe Hosting rồi chat với bot bằng tiếng Việt: hỏi tình trạng ứng dụng, xem log, nhờ chẩn đoán và xử lý lỗi. Bot chỉ phục vụ chat riêng (không phục vụ nhóm).
+
+| Method | Endpoint | Mô tả |
+|---|---|---|
+| POST | `/link-code` | Frontend tạo mã liên kết dùng một lần (hết hạn sau 10 phút) cho `user_id` đang đăng nhập; trả về đường dẫn `t.me/<bot>?start=<mã>` |
+| GET | `/status?user_id=` | Trạng thái liên kết của người dùng |
+| DELETE | `/link?user_id=` | Hủy liên kết |
+
+Cách hoạt động:
+
+- **Vòng lặp tác tử** (`hermes_butler.py`): Vibe Core gửi cho Hermes LLM danh sách công cụ và app của người dùng; Hermes trả về một JSON chọn công cụ (`app_status`, `runtime_logs`, `build_log`, `k8s_events`, `health_report`, `http_check`, `deploy_history`, `diagnose`…) hoặc câu trả lời. Vibe Core chạy công cụ đọc rồi gửi kết quả lại cho Hermes, tối đa 6 bước mỗi tin nhắn.
+- **Duyệt thao tác**: `restart_app`, `rollback_app`, `redeploy_app` và các hành động khắc phục do `diagnose` đề xuất không được chạy ngay. Bot gửi nút **Duyệt / Bỏ qua**; chỉ đúng chat đã nhận đề xuất mới bấm được, yêu cầu hết hạn sau 30 phút và quyền được kiểm tra lại lúc thực thi.
+- **Phân quyền** (`user_directory.py`): Vibe Core hỏi frontend qua `GET /api/internal/telegram/directory` (header `X-API-Key`) để biết ai sở hữu app nào. Người dùng chỉ thao tác được app của mình, admin được mọi app. Không gọi được frontend thì từ chối mọi thao tác.
+- **Giám sát tự động** (`hermes_monitor.py`): cứ `MONITOR_INTERVAL` giây kiểm tra Pod (CrashLoopBackOff, chưa Ready, restart tăng), HTTPS và hạn chứng chỉ của từng app, ổ đĩa/RAM/CPU của nút quản lý và nút K3s. Cảnh báo gửi khi lỗi lặp lại 2 lần liên tiếp và gửi tin khi đã hồi phục; app gửi cho chủ app và admin, VPS chỉ gửi admin. Mỗi sáng gửi báo cáo tổng hợp. Phần giám sát chạy theo luật, không gọi LLM.
+
 ---
 
 ## CI/CD cho ứng dụng người dùng
@@ -320,6 +337,14 @@ Tạo file `.env` trong thư mục gốc của dự án. File này đã nằm tr
 | `HERMES_API_URL` | Không | Endpoint của Hermes. Mặc định `http://127.0.0.1:8645/v1/chat/completions`. |
 | `INTERNAL_BEARER_TOKEN` | Không | Bearer token gửi tới Hermes. |
 | `AGY_BIN_PATH`, `CLAUDE_BIN_PATH` | Không | Đường dẫn tới CLI nếu không nằm trong `PATH`. |
+| `TELEGRAM_BOT_TOKEN` | Không | Token bot Telegram (tạo bằng @BotFather). Có biến này thì Hermes Butler và Hermes Monitor tự chạy khi API khởi động. |
+| `TELEGRAM_BOT_USERNAME` | Không | Tên bot (không có @). Bỏ trống thì lấy tự động qua `getMe`. |
+| `FRONTEND_URL` | Không | Địa chỉ frontend để tra quyền sở hữu app. Mặc định `https://vibe.quyenlt.com`. |
+| `HERMES_BUTLER` | Không | Đặt `0` để tắt bot và giám sát dù đã có token. |
+| `MONITOR_INTERVAL` | Không | Chu kỳ giám sát (giây). Mặc định `300`. |
+| `MONITOR_DISK_PCT`, `MONITOR_MEM_PCT`, `MONITOR_CPU_PCT` | Không | Ngưỡng cảnh báo tài nguyên (%). Mặc định `85`, `90`, `90`. |
+| `MONITOR_CERT_DAYS` | Không | Cảnh báo khi chứng chỉ còn dưới số ngày này. Mặc định `14`. |
+| `DAILY_REPORT_HOUR` | Không | Giờ gửi báo cáo hằng ngày (GMT+7). Mặc định `8`. |
 
 ### Chạy
 
@@ -344,6 +369,8 @@ Các thư mục sau được tạo tự động trong `/opt/vibe-hosting` và kh
 | `backups/` | File backup database được tải lên |
 | `uploads/` | File nén được tải lên |
 | `apps_config.json` | Cấu hình của các app (repo, loại database, trạng thái CI/CD…) |
+| `telegram_links.json` | Liên kết Telegram ↔ tài khoản và mã liên kết đang chờ |
+| `monitor_state.json` | Trạng thái giám sát (để chỉ cảnh báo khi trạng thái thay đổi) |
 
 ### Tự động triển khai API
 
