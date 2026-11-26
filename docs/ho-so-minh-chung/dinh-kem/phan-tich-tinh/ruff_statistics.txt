@@ -1,0 +1,28 @@
+154	BLE001  	[ ] blind-except
+115	UP045   	[*] non-pep604-annotation-optional
+ 70	S110    	[ ] try-except-pass
+ 68	UP006   	[*] non-pep585-annotation
+ 28	PLW1510 	[ ] subprocess-run-without-check
+ 26	RUF010  	[*] explicit-f-string-type-conversion
+ 24	F401    	[*] unused-import
+ 22	F541    	[*] f-string-missing-placeholders
+ 18	TRY002  	[ ] raise-vanilla-class
+ 15	UP035   	[-] deprecated-import
+ 15	I001    	[*] unsorted-imports
+ 13	ASYNC230	[ ] blocking-open-call-in-async-function
+  8	RUF100  	[*] unused-noqa
+  5	B008    	[ ] function-call-in-default-argument
+  4	RUF013  	[ ] implicit-optional
+  4	RUF012  	[ ] mutable-class-default
+  2	UP017   	[*] datetime-timezone-utc
+  2	PIE810  	[ ] multiple-starts-ends-with
+  2	PLR1722 	[ ] sys-exit-alias
+  2	S112    	[ ] try-except-continue
+  2	F841    	[*] unused-variable
+  2	TRY201  	[ ] verbose-raise
+  1	FURB162 	[ ] fromisoformat-replace-z
+  1	FURB129 	[*] readlines-in-for
+  1	FURB188 	[*] slice-to-remove-prefix-or-suffix
+  1	RUF019  	[*] unnecessary-key-check
+Found 605 errors.
+[*] 286 fixable with `--fix` (11 unsafe fixes available with `--fix --unsafe-fixes`).

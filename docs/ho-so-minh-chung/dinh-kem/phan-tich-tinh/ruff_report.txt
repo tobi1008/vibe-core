@@ -1,0 +1,607 @@
+archive_builder_core.py:1:1: I001 [*] Import block is un-sorted or un-formatted
+archive_builder_core.py:4:8: F401 [*] `json` imported but unused
+archive_builder_core.py:10:1: UP035 `typing.Dict` is deprecated, use `dict` instead
+archive_builder_core.py:10:1: UP035 `typing.List` is deprecated, use `list` instead
+archive_builder_core.py:10:20: F401 [*] `typing.Optional` imported but unused
+archive_builder_core.py:10:30: F401 [*] `typing.List` imported but unused
+archive_builder_core.py:10:36: F401 [*] `typing.Dict` imported but unused
+archive_builder_core.py:10:42: F401 [*] `typing.Any` imported but unused
+archive_builder_core.py:15:1: I001 [*] Import block is un-sorted or un-formatted
+archive_builder_core.py:20:5: F401 [*] `builder_core.DOCKER_PASSWORD` imported but unused
+archive_builder_core.py:25:5: F401 [*] `builder_core.run_agy_json` imported but unused
+archive_builder_core.py:27:5: F401 [*] `builder_core.delete_app` imported but unused
+archive_builder_core.py:54:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+archive_builder_core.py:54:12: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:70:23: TRY002 Create your own exception
+archive_builder_core.py:81:23: TRY002 Create your own exception
+archive_builder_core.py:95:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+archive_builder_core.py:95:12: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:105:15: TRY002 Create your own exception
+archive_builder_core.py:115:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+archive_builder_core.py:115:12: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:123:15: TRY002 Create your own exception
+archive_builder_core.py:141:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+archive_builder_core.py:141:16: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:189:25: F541 [*] f-string without any placeholders
+archive_builder_core.py:224:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+archive_builder_core.py:224:24: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:256:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+archive_builder_core.py:256:20: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:266:16: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:285:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+archive_builder_core.py:285:24: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:364:20: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:368:27: TRY002 Create your own exception
+archive_builder_core.py:377:23: TRY002 Create your own exception
+archive_builder_core.py:418:20: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:421:27: TRY002 Create your own exception
+archive_builder_core.py:422:37: F541 [*] f-string without any placeholders
+archive_builder_core.py:440:12: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:442:81: RUF010 [*] Use explicit conversion flag
+archive_builder_core.py:473:23: PLW1510 `subprocess.run` without explicit `check` argument
+archive_builder_core.py:478:23: PLW1510 `subprocess.run` without explicit `check` argument
+archive_builder_core.py:483:23: PLW1510 `subprocess.run` without explicit `check` argument
+archive_builder_core.py:495:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+archive_builder_core.py:495:16: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:500:29: F541 [*] f-string without any placeholders
+archive_builder_core.py:514:24: PIE810 Call `startswith` once with a `tuple`
+archive_builder_core.py:544:33: F541 [*] f-string without any placeholders
+archive_builder_core.py:553:29: F541 [*] f-string without any placeholders
+archive_builder_core.py:554:12: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:558:13: PLW1510 `subprocess.run` without explicit `check` argument
+archive_builder_core.py:559:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+archive_builder_core.py:559:16: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:564:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+archive_builder_core.py:564:20: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:598:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+archive_builder_core.py:598:20: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:604:9: I001 [*] Import block is un-sorted or un-formatted
+archive_builder_core.py:633:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+archive_builder_core.py:633:16: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:643:29: F541 [*] f-string without any placeholders
+archive_builder_core.py:664:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+archive_builder_core.py:664:20: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:668:23: TRY002 Create your own exception
+archive_builder_core.py:676:33: F541 [*] f-string without any placeholders
+archive_builder_core.py:730:12: BLE001 Do not catch blind exception: `Exception`
+archive_builder_core.py:732:89: RUF010 [*] Use explicit conversion flag
+builder.py:1:1: I001 [*] Import block is un-sorted or un-formatted
+builder.py:38:9: PLR1722 Use `sys.exit()` instead of `exit`
+builder.py:107:8: BLE001 Do not catch blind exception: `Exception`
+builder.py:111:5: PLR1722 Use `sys.exit()` instead of `exit`
+builder.py:138:7: F541 [*] f-string without any placeholders
+builder_core.py:2:1: I001 [*] Import block is un-sorted or un-formatted
+builder_core.py:9:1: UP035 `typing.Dict` is deprecated, use `dict` instead
+builder_core.py:9:36: F401 [*] `typing.Any` imported but unused
+builder_core.py:61:39: UP045 [*] Use `X | None` for type annotations
+builder_core.py:93:64: UP045 [*] Use `X | None` for type annotations
+builder_core.py:93:122: UP045 [*] Use `X | None` for type annotations
+builder_core.py:133:19: PLW1510 `subprocess.run` without explicit `check` argument
+builder_core.py:152:16: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:153:88: RUF010 [*] Use explicit conversion flag
+builder_core.py:164:15: PLW1510 `subprocess.run` without explicit `check` argument
+builder_core.py:168:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+builder_core.py:168:12: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:171:11: TRY002 Create your own exception
+builder_core.py:173:62: UP045 [*] Use `X | None` for type annotations
+builder_core.py:173:120: UP045 [*] Use `X | None` for type annotations
+builder_core.py:201:15: TRY201 Use `raise` without specifying exception name
+builder_core.py:203:98: UP045 [*] Use `X | None` for type annotations
+builder_core.py:203:132: UP045 [*] Use `X | None` for type annotations
+builder_core.py:243:16: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:244:74: RUF010 [*] Use explicit conversion flag
+builder_core.py:248:11: TRY002 Create your own exception
+builder_core.py:250:96: UP045 [*] Use `X | None` for type annotations
+builder_core.py:250:130: UP045 [*] Use `X | None` for type annotations
+builder_core.py:291:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+builder_core.py:291:16: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:299:67: UP045 [*] Use `X | None` for type annotations
+builder_core.py:299:125: UP045 [*] Use `X | None` for type annotations
+builder_core.py:326:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+builder_core.py:326:16: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:343:19: PLW1510 `subprocess.run` without explicit `check` argument
+builder_core.py:363:16: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:364:94: RUF010 [*] Use explicit conversion flag
+builder_core.py:370:15: PLW1510 `subprocess.run` without explicit `check` argument
+builder_core.py:374:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+builder_core.py:374:12: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:377:11: TRY002 Create your own exception
+builder_core.py:379:65: UP045 [*] Use `X | None` for type annotations
+builder_core.py:379:123: UP045 [*] Use `X | None` for type annotations
+builder_core.py:404:15: TRY201 Use `raise` without specifying exception name
+builder_core.py:409:10: UP045 [*] Use `X | None` for type annotations
+builder_core.py:410:14: UP045 [*] Use `X | None` for type annotations
+builder_core.py:411:22: UP045 [*] Use `X | None` for type annotations
+builder_core.py:434:10: UP045 [*] Use `X | None` for type annotations
+builder_core.py:435:14: UP045 [*] Use `X | None` for type annotations
+builder_core.py:436:22: UP045 [*] Use `X | None` for type annotations
+builder_core.py:509:15: TRY002 Create your own exception
+builder_core.py:580:21: S110 `try`-`except`-`pass` detected, consider logging the exception
+builder_core.py:580:28: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:587:16: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:606:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+builder_core.py:606:24: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:684:20: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:688:27: TRY002 Create your own exception
+builder_core.py:697:23: TRY002 Create your own exception
+builder_core.py:736:20: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:739:27: TRY002 Create your own exception
+builder_core.py:740:37: F541 [*] f-string without any placeholders
+builder_core.py:752:12: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:767:35: UP045 [*] Use `X | None` for type annotations
+builder_core.py:777:12: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:787:13: S112 `try`-`except`-`continue` detected, consider logging the exception
+builder_core.py:787:20: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:798:19: PLW1510 `subprocess.run` without explicit `check` argument
+builder_core.py:800:9: S112 `try`-`except`-`continue` detected, consider logging the exception
+builder_core.py:800:16: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:807:32: UP045 [*] Use `X | None` for type annotations
+builder_core.py:814:26: UP045 [*] Use `X | None` for type annotations
+builder_core.py:834:59: UP006 [*] Use `dict` instead of `Dict` for type annotation
+builder_core.py:844:12: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:856:16: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:875:29: F541 [*] f-string without any placeholders
+builder_core.py:878:12: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:883:29: F541 [*] f-string without any placeholders
+builder_core.py:894:12: BLE001 Do not catch blind exception: `Exception`
+builder_core.py:897:25: F541 [*] f-string without any placeholders
+builder_core.py:901:29: F541 [*] f-string without any placeholders
+builder_core.py:905:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+builder_core.py:905:12: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:1:1: I001 [*] Import block is un-sorted or un-formatted
+cicd_core.py:59:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+cicd_core.py:59:16: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:69:5: FURB188 [*] Prefer `str.removesuffix()` over conditionally replacing with slice.
+cicd_core.py:76:45: UP045 [*] Use `X | None` for type annotations
+cicd_core.py:86:43: UP045 [*] Use `X | None` for type annotations
+cicd_core.py:97:12: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:107:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+cicd_core.py:107:16: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:114:24: UP045 [*] Use `X | None` for type annotations
+cicd_core.py:115:20: UP045 [*] Use `X | None` for type annotations
+cicd_core.py:117:6: UP045 [*] Use `X | None` for type annotations
+cicd_core.py:129:16: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:146:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+cicd_core.py:146:16: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:169:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+cicd_core.py:169:16: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:187:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+cicd_core.py:187:20: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:191:16: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:228:29: F541 [*] f-string without any placeholders
+cicd_core.py:250:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+cicd_core.py:250:16: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:256:16: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:257:48: F541 [*] f-string without any placeholders
+cicd_core.py:266:16: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:275:20: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:283:25: F541 [*] f-string without any placeholders
+cicd_core.py:290:12: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:297:16: BLE001 Do not catch blind exception: `Exception`
+cicd_core.py:306:25: UP045 [*] Use `X | None` for type annotations
+cicd_core.py:308:23: UP045 [*] Use `X | None` for type annotations
+cicd_core.py:331:25: UP045 [*] Use `X | None` for type annotations
+cicd_core.py:333:23: UP045 [*] Use `X | None` for type annotations
+cicd_core.py:435:20: BLE001 Do not catch blind exception: `Exception`
+cms_builder_core.py:9:1: I001 [*] Import block is un-sorted or un-formatted
+cms_builder_core.py:29:5: F401 [*] `db_builder_core.detect_app_port` imported but unused
+cms_builder_core.py:143:12: BLE001 Do not catch blind exception: `Exception`
+cms_builder_core.py:159:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+cms_builder_core.py:159:16: BLE001 Do not catch blind exception: `Exception`
+cms_builder_core.py:194:16: BLE001 Do not catch blind exception: `Exception`
+cms_builder_core.py:209:15: UP045 [*] Use `X | None` for type annotations
+cms_builder_core.py:245:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+cms_builder_core.py:245:16: BLE001 Do not catch blind exception: `Exception`
+cms_builder_core.py:267:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+cms_builder_core.py:267:20: BLE001 Do not catch blind exception: `Exception`
+cms_builder_core.py:298:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+cms_builder_core.py:298:20: BLE001 Do not catch blind exception: `Exception`
+cms_builder_core.py:335:12: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:1:1: I001 [*] Import block is un-sorted or un-formatted
+db_builder_core.py:9:8: F401 [*] `requests` imported but unused
+db_builder_core.py:10:1: UP035 `typing.Dict` is deprecated, use `dict` instead
+db_builder_core.py:10:1: UP035 `typing.List` is deprecated, use `list` instead
+db_builder_core.py:10:30: F401 [*] `typing.Dict` imported but unused
+db_builder_core.py:10:36: F401 [*] `typing.Any` imported but unused
+db_builder_core.py:10:41: F401 [*] `typing.List` imported but unused
+db_builder_core.py:17:1: I001 [*] Import block is un-sorted or un-formatted
+db_builder_core.py:19:105: F401 [*] `builder_core.HERMES_API_URL` imported but unused
+db_builder_core.py:19:121: F401 [*] `builder_core.HEADERS` imported but unused
+db_builder_core.py:19:130: F401 [*] `builder_core.FALLBACK_MODELS` imported but unused
+db_builder_core.py:72:52: F541 [*] f-string without any placeholders
+db_builder_core.py:77:29: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:77:36: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:79:12: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:83:60: RUF013 PEP 484 prohibits implicit `Optional`
+db_builder_core.py:100:21: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:100:28: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:127:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:127:16: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:206:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:206:16: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:241:16: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:246:84: UP045 [*] Use `X | None` for type annotations
+db_builder_core.py:406:92: RUF013 PEP 484 prohibits implicit `Optional`
+db_builder_core.py:543:23: PLW1510 `subprocess.run` without explicit `check` argument
+db_builder_core.py:548:23: PLW1510 `subprocess.run` without explicit `check` argument
+db_builder_core.py:553:23: PLW1510 `subprocess.run` without explicit `check` argument
+db_builder_core.py:565:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:565:16: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:570:29: F541 [*] f-string without any placeholders
+db_builder_core.py:584:24: PIE810 Call `startswith` once with a `tuple`
+db_builder_core.py:614:33: F541 [*] f-string without any placeholders
+db_builder_core.py:623:29: F541 [*] f-string without any placeholders
+db_builder_core.py:624:12: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:628:13: PLW1510 `subprocess.run` without explicit `check` argument
+db_builder_core.py:629:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:629:16: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:634:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:634:20: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:657:16: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:666:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:666:16: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:682:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:682:24: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:723:12: RUF019 [*] Unnecessary key check before dictionary access
+db_builder_core.py:736:21: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:736:28: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:743:12: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:754:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:754:20: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:802:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:802:24: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:826:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:826:16: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:835:29: F541 [*] f-string without any placeholders
+db_builder_core.py:836:44: F541 [*] f-string without any placeholders
+db_builder_core.py:847:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:847:20: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:889:12: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:921:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+db_builder_core.py:921:20: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:995:12: BLE001 Do not catch blind exception: `Exception`
+db_builder_core.py:1015:12: BLE001 Do not catch blind exception: `Exception`
+dockerhub_cleanup.py:20:1: UP035 `typing.Dict` is deprecated, use `dict` instead
+dockerhub_cleanup.py:20:1: UP035 `typing.List` is deprecated, use `list` instead
+dockerhub_cleanup.py:20:1: UP035 `typing.Set` is deprecated, use `set` instead
+dockerhub_cleanup.py:36:26: UP006 [*] Use `set` instead of `Set` for type annotation
+dockerhub_cleanup.py:41:39: UP006 [*] Use `list` instead of `List` for type annotation
+dockerhub_cleanup.py:41:44: UP006 [*] Use `dict` instead of `Dict` for type annotation
+dockerhub_cleanup.py:54:31: UP006 [*] Use `list` instead of `List` for type annotation
+dockerhub_cleanup.py:54:36: UP006 [*] Use `dict` instead of `Dict` for type annotation
+dockerhub_cleanup.py:58:41: UP006 [*] Use `list` instead of `List` for type annotation
+dockerhub_cleanup.py:58:46: UP006 [*] Use `dict` instead of `Dict` for type annotation
+dockerhub_cleanup.py:62:24: UP006 [*] Use `set` instead of `Set` for type annotation
+dockerhub_cleanup.py:64:11: PLW1510 `subprocess.run` without explicit `check` argument
+dockerhub_cleanup.py:87:31: UP006 [*] Use `set` instead of `Set` for type annotation
+dockerhub_cleanup.py:87:44: UP006 [*] Use `dict` instead of `Dict` for type annotation
+dockerhub_cleanup.py:87:54: UP006 [*] Use `set` instead of `Set` for type annotation
+dockerhub_cleanup.py:89:11: UP006 [*] Use `dict` instead of `Dict` for type annotation
+dockerhub_cleanup.py:89:21: UP006 [*] Use `set` instead of `Set` for type annotation
+dockerhub_cleanup.py:99:21: UP006 [*] Use `set` instead of `Set` for type annotation
+dockerhub_cleanup.py:104:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+dockerhub_cleanup.py:104:12: BLE001 Do not catch blind exception: `Exception`
+dockerhub_cleanup.py:110:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+dockerhub_cleanup.py:110:12: BLE001 Do not catch blind exception: `Exception`
+dockerhub_cleanup.py:119:17: UP045 [*] Use `X | None` for type annotations
+dockerhub_cleanup.py:123:39: FURB162 Unnecessary timezone replacement with zero offset
+dockerhub_cleanup.py:129:23: UP045 [*] Use `X | None` for type annotations
+dockerhub_cleanup.py:129:48: UP006 [*] Use `dict` instead of `Dict` for type annotation
+dockerhub_cleanup.py:138:24: UP017 [*] Use `datetime.UTC` alias
+dockerhub_cleanup.py:143:11: UP006 [*] Use `dict` instead of `Dict` for type annotation
+dockerhub_cleanup.py:170:12: BLE001 Do not catch blind exception: `Exception`
+dockerhub_cleanup.py:181:20: UP006 [*] Use `list` instead of `List` for type annotation
+dockerhub_cleanup.py:181:37: UP006 [*] Use `dict` instead of `Dict` for type annotation
+dockerhub_cleanup.py:181:47: UP006 [*] Use `list` instead of `List` for type annotation
+dockerhub_cleanup.py:181:62: UP006 [*] Use `dict` instead of `Dict` for type annotation
+dockerhub_cleanup.py:188:13: UP006 [*] Use `dict` instead of `Dict` for type annotation
+file_manager_api.py:1:1: I001 [*] Import block is un-sorted or un-formatted
+file_manager_api.py:23:20: UP045 [*] Use `X | None` for type annotations
+file_manager_api.py:24:15: UP045 [*] Use `X | None` for type annotations
+file_manager_api.py:25:19: UP045 [*] Use `X | None` for type annotations
+file_manager_api.py:26:16: UP045 [*] Use `X | None` for type annotations
+file_manager_api.py:27:18: UP045 [*] Use `X | None` for type annotations
+file_manager_api.py:37:16: BLE001 Do not catch blind exception: `Exception`
+file_manager_api.py:47:12: BLE001 Do not catch blind exception: `Exception`
+file_manager_api.py:181:12: BLE001 Do not catch blind exception: `Exception`
+file_manager_api.py:182:74: RUF010 [*] Use explicit conversion flag
+file_manager_api.py:200:12: BLE001 Do not catch blind exception: `Exception`
+file_manager_api.py:201:74: RUF010 [*] Use explicit conversion flag
+file_manager_api.py:279:27: TRY002 Create your own exception
+file_manager_api.py:291:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+file_manager_api.py:291:24: BLE001 Do not catch blind exception: `Exception`
+file_manager_api.py:319:16: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:1:1: I001 [*] Import block is un-sorted or un-formatted
+hermes_agent_router.py:6:1: UP035 `typing.Dict` is deprecated, use `dict` instead
+hermes_agent_router.py:6:1: UP035 `typing.List` is deprecated, use `list` instead
+hermes_agent_router.py:7:32: F401 [*] `fastapi.HTTPException` imported but unused
+hermes_agent_router.py:14:5: F401 [*] `builder_core.HERMES_API_URL` imported but unused
+hermes_agent_router.py:15:5: F401 [*] `builder_core.HEADERS` imported but unused
+hermes_agent_router.py:16:5: F401 [*] `builder_core.FALLBACK_MODELS` imported but unused
+hermes_agent_router.py:36:13: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:37:11: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:38:16: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:39:14: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:40:11: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:41:14: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:42:15: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:43:15: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:43:24: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_agent_router.py:48:16: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:49:16: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:51:22: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:52:18: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:53:19: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:54:16: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:57:14: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_agent_router.py:58:19: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:59:16: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:68:16: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:70:14: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_agent_router.py:71:22: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:72:18: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:102:89: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:155:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+hermes_agent_router.py:155:12: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:190:64: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:218:65: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_agent_router.py:250:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+hermes_agent_router.py:250:24: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:256:68: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_agent_router.py:257:14: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_agent_router.py:279:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+hermes_agent_router.py:279:20: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:292:19: PLW1510 `subprocess.run` without explicit `check` argument
+hermes_agent_router.py:298:28: PLW1510 `subprocess.run` without explicit `check` argument
+hermes_agent_router.py:304:12: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:305:71: RUF010 [*] Use explicit conversion flag
+hermes_agent_router.py:308:19: PLW1510 `subprocess.run` without explicit `check` argument
+hermes_agent_router.py:313:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+hermes_agent_router.py:313:12: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:317:19: PLW1510 `subprocess.run` without explicit `check` argument
+hermes_agent_router.py:322:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+hermes_agent_router.py:322:12: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:326:22: PLW1510 `subprocess.run` without explicit `check` argument
+hermes_agent_router.py:331:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+hermes_agent_router.py:331:12: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:357:21: S110 `try`-`except`-`pass` detected, consider logging the exception
+hermes_agent_router.py:357:28: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:369:39: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_agent_router.py:369:72: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:369:105: UP045 [*] Use `X | None` for type annotations
+hermes_agent_router.py:369:156: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_agent_router.py:448:12: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:451:96: RUF010 [*] Use explicit conversion flag
+hermes_agent_router.py:492:77: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_agent_router.py:507:19: PLW1510 `subprocess.run` without explicit `check` argument
+hermes_agent_router.py:526:16: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:527:82: RUF010 [*] Use explicit conversion flag
+hermes_agent_router.py:563:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+hermes_agent_router.py:563:20: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:571:16: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:572:68: RUF010 [*] Use explicit conversion flag
+hermes_agent_router.py:605:24: PLW1510 `subprocess.run` without explicit `check` argument
+hermes_agent_router.py:614:24: PLW1510 `subprocess.run` without explicit `check` argument
+hermes_agent_router.py:638:16: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:639:77: RUF010 [*] Use explicit conversion flag
+hermes_agent_router.py:650:15: PLW1510 `subprocess.run` without explicit `check` argument
+hermes_agent_router.py:665:16: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:678:15: PLW1510 `subprocess.run` without explicit `check` argument
+hermes_agent_router.py:686:80: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_agent_router.py:717:16: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:734:12: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:735:89: RUF010 [*] Use explicit conversion flag
+hermes_agent_router.py:756:20: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:757:92: RUF010 [*] Use explicit conversion flag
+hermes_agent_router.py:805:20: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:806:87: RUF010 [*] Use explicit conversion flag
+hermes_agent_router.py:812:74: RUF010 [*] Use explicit conversion flag
+hermes_agent_router.py:830:12: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:834:57: RUF010 [*] Use explicit conversion flag
+hermes_agent_router.py:887:12: BLE001 Do not catch blind exception: `Exception`
+hermes_agent_router.py:892:99: RUF010 [*] Use explicit conversion flag
+hermes_verifier.py:19:1: UP035 [*] Import from `collections.abc` instead: `Callable`
+hermes_verifier.py:19:1: UP035 `typing.Dict` is deprecated, use `dict` instead
+hermes_verifier.py:19:1: UP035 `typing.List` is deprecated, use `list` instead
+hermes_verifier.py:63:20: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_verifier.py:66:16: PLW1510 `subprocess.run` without explicit `check` argument
+hermes_verifier.py:67:12: BLE001 Do not catch blind exception: `Exception`
+hermes_verifier.py:79:46: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:79:56: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:84:12: BLE001 Do not catch blind exception: `Exception`
+hermes_verifier.py:88:55: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_verifier.py:88:60: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:88:86: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:102:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+hermes_verifier.py:102:12: BLE001 Do not catch blind exception: `Exception`
+hermes_verifier.py:106:35: UP045 [*] Use `X | None` for type annotations
+hermes_verifier.py:106:44: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:110:12: BLE001 Do not catch blind exception: `Exception`
+hermes_verifier.py:114:42: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_verifier.py:127:28: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:139:40: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:161:22: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:161:41: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_verifier.py:161:46: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:196:28: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:196:47: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_verifier.py:196:52: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:222:64: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:223:11: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:230:12: BLE001 Do not catch blind exception: `Exception`
+hermes_verifier.py:247:16: BLE001 Do not catch blind exception: `Exception`
+hermes_verifier.py:276:27: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_verifier.py:285:39: FURB129 [*] Instead of calling `readlines()`, iterate over file object directly
+hermes_verifier.py:287:12: BLE001 Do not catch blind exception: `Exception`
+hermes_verifier.py:291:24: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_verifier.py:291:29: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:291:53: UP045 [*] Use `X | None` for type annotations
+hermes_verifier.py:319:41: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_verifier.py:319:46: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:320:23: UP045 [*] Use `X | None` for type annotations
+hermes_verifier.py:320:76: UP045 [*] Use `X | None` for type annotations
+hermes_verifier.py:320:85: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:362:12: BLE001 Do not catch blind exception: `Exception`
+hermes_verifier.py:367:49: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_verifier.py:367:67: UP045 [*] Use `X | None` for type annotations
+hermes_verifier.py:368:28: UP045 [*] Use `X | None` for type annotations
+hermes_verifier.py:368:76: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:427:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+hermes_verifier.py:427:12: BLE001 Do not catch blind exception: `Exception`
+hermes_verifier.py:439:57: UP045 [*] Use `X | None` for type annotations
+hermes_verifier.py:439:66: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_verifier.py:439:71: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:452:12: BLE001 Do not catch blind exception: `Exception`
+hermes_verifier.py:499:32: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_verifier.py:499:37: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:499:57: UP045 [*] Use `X | None` for type annotations
+hermes_verifier.py:513:27: UP006 [*] Use `dict` instead of `Dict` for type annotation
+hermes_verifier.py:532:49: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_verifier.py:532:67: UP045 [*] Use `X | None` for type annotations
+hermes_verifier.py:533:38: UP045 [*] Use `X | None` for type annotations
+hermes_verifier.py:533:47: UP006 [*] Use `list` instead of `List` for type annotation
+hermes_verifier.py:534:28: UP045 [*] Use `X | None` for type annotations
+hermes_verifier.py:542:12: BLE001 Do not catch blind exception: `Exception`
+main.py:1:1: I001 [*] Import block is un-sorted or un-formatted
+main.py:5:1: UP035 `typing.Dict` is deprecated, use `dict` instead
+main.py:5:1: UP035 `typing.List` is deprecated, use `list` instead
+main.py:21:8: BLE001 Do not catch blind exception: `Exception`
+main.py:31:8: BLE001 Do not catch blind exception: `Exception`
+main.py:31:21: F841 [*] Local variable `e` is assigned to but never used
+main.py:37:8: BLE001 Do not catch blind exception: `Exception`
+main.py:37:21: F841 [*] Local variable `e` is assigned to but never used
+main.py:85:5: I001 [*] Import block is un-sorted or un-formatted
+main.py:177:44: UP045 [*] Use `X | None` for type annotations
+main.py:177:62: UP045 [*] Use `X | None` for type annotations
+main.py:189:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+main.py:189:12: BLE001 Do not catch blind exception: `Exception`
+main.py:193:39: UP045 [*] Use `X | None` for type annotations
+main.py:202:19: UP045 [*] Use `X | None` for type annotations
+main.py:203:18: UP045 [*] Use `X | None` for type annotations
+main.py:209:19: UP045 [*] Use `X | None` for type annotations
+main.py:210:18: UP045 [*] Use `X | None` for type annotations
+main.py:211:18: UP045 [*] Use `X | None` for type annotations
+main.py:212:15: UP045 [*] Use `X | None` for type annotations
+main.py:215:13: UP045 [*] Use `X | None` for type annotations
+main.py:216:23: UP045 [*] Use `X | None` for type annotations
+main.py:217:15: UP045 [*] Use `X | None` for type annotations
+main.py:218:25: UP045 [*] Use `X | None` for type annotations
+main.py:224:16: UP045 [*] Use `X | None` for type annotations
+main.py:225:14: UP045 [*] Use `X | None` for type annotations
+main.py:226:19: UP045 [*] Use `X | None` for type annotations
+main.py:227:18: UP045 [*] Use `X | None` for type annotations
+main.py:233:14: UP045 [*] Use `X | None` for type annotations
+main.py:234:19: UP045 [*] Use `X | None` for type annotations
+main.py:235:18: UP045 [*] Use `X | None` for type annotations
+main.py:236:15: UP045 [*] Use `X | None` for type annotations
+main.py:239:16: UP045 [*] Use `X | None` for type annotations
+main.py:240:15: UP045 [*] Use `X | None` for type annotations
+main.py:250:10: ASYNC230 Async functions should not open files with blocking methods like `open`
+main.py:285:10: ASYNC230 Async functions should not open files with blocking methods like `open`
+main.py:324:19: UP045 [*] Use `X | None` for type annotations
+main.py:325:18: UP045 [*] Use `X | None` for type annotations
+main.py:325:41: B008 Do not perform function call `File` in argument defaults; instead, perform the call within the function, or read the default from a module-level singleton variable
+main.py:326:18: UP045 [*] Use `X | None` for type annotations
+main.py:338:18: ASYNC230 Async functions should not open files with blocking methods like `open`
+main.py:340:16: BLE001 Do not catch blind exception: `Exception`
+main.py:341:71: RUF010 [*] Use explicit conversion flag
+main.py:345:10: ASYNC230 Async functions should not open files with blocking methods like `open`
+main.py:363:32: B008 Do not perform function call `File` in argument defaults; instead, perform the call within the function, or read the default from a module-level singleton variable
+main.py:366:18: UP045 [*] Use `X | None` for type annotations
+main.py:374:14: ASYNC230 Async functions should not open files with blocking methods like `open`
+main.py:376:12: BLE001 Do not catch blind exception: `Exception`
+main.py:377:76: RUF010 [*] Use explicit conversion flag
+main.py:381:10: ASYNC230 Async functions should not open files with blocking methods like `open`
+main.py:402:32: B008 Do not perform function call `File` in argument defaults; instead, perform the call within the function, or read the default from a module-level singleton variable
+main.py:406:18: UP045 [*] Use `X | None` for type annotations
+main.py:406:41: B008 Do not perform function call `File` in argument defaults; instead, perform the call within the function, or read the default from a module-level singleton variable
+main.py:407:18: UP045 [*] Use `X | None` for type annotations
+main.py:415:14: ASYNC230 Async functions should not open files with blocking methods like `open`
+main.py:417:12: BLE001 Do not catch blind exception: `Exception`
+main.py:418:76: RUF010 [*] Use explicit conversion flag
+main.py:427:18: ASYNC230 Async functions should not open files with blocking methods like `open`
+main.py:429:16: BLE001 Do not catch blind exception: `Exception`
+main.py:430:78: RUF010 [*] Use explicit conversion flag
+main.py:434:10: ASYNC230 Async functions should not open files with blocking methods like `open`
+main.py:469:19: UP045 [*] Use `X | None` for type annotations
+main.py:470:18: UP045 [*] Use `X | None` for type annotations
+main.py:470:41: B008 Do not perform function call `File` in argument defaults; instead, perform the call within the function, or read the default from a module-level singleton variable
+main.py:471:18: UP045 [*] Use `X | None` for type annotations
+main.py:486:18: ASYNC230 Async functions should not open files with blocking methods like `open`
+main.py:488:16: BLE001 Do not catch blind exception: `Exception`
+main.py:489:75: RUF010 [*] Use explicit conversion flag
+main.py:493:10: ASYNC230 Async functions should not open files with blocking methods like `open`
+main.py:528:10: ASYNC230 Async functions should not open files with blocking methods like `open`
+main.py:585:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+main.py:585:12: BLE001 Do not catch blind exception: `Exception`
+main.py:590:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+main.py:590:12: BLE001 Do not catch blind exception: `Exception`
+main.py:605:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+main.py:605:20: BLE001 Do not catch blind exception: `Exception`
+main.py:622:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+main.py:622:12: BLE001 Do not catch blind exception: `Exception`
+main.py:630:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+main.py:630:12: BLE001 Do not catch blind exception: `Exception`
+main.py:650:14: ASYNC230 Async functions should not open files with blocking methods like `open`
+main.py:656:12: BLE001 Do not catch blind exception: `Exception`
+main.py:657:73: RUF010 [*] Use explicit conversion flag
+main.py:660:52: UP045 [*] Use `X | None` for type annotations
+main.py:670:18: PLW1510 `subprocess.run` without explicit `check` argument
+main.py:674:27: PLW1510 `subprocess.run` without explicit `check` argument
+main.py:682:12: BLE001 Do not catch blind exception: `Exception`
+main.py:683:69: RUF010 [*] Use explicit conversion flag
+main.py:698:10: UP045 [*] Use `X | None` for type annotations
+main.py:723:12: BLE001 Do not catch blind exception: `Exception`
+main.py:762:12: UP006 [*] Use `list` instead of `List` for type annotation
+main.py:763:11: UP006 [*] Use `dict` instead of `Dict` for type annotation
+main.py:763:21: UP006 [*] Use `list` instead of `List` for type annotation
+main.py:785:55: UP045 [*] Use `X | None` for type annotations
+main.py:813:18: PLW1510 `subprocess.run` without explicit `check` argument
+main.py:820:12: BLE001 Do not catch blind exception: `Exception`
+main.py:821:83: RUF010 [*] Use explicit conversion flag
+monorepo_builder_core.py:1:1: I001 [*] Import block is un-sorted or un-formatted
+monorepo_builder_core.py:25:54: RUF013 PEP 484 prohibits implicit `Optional`
+monorepo_builder_core.py:79:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+monorepo_builder_core.py:79:20: BLE001 Do not catch blind exception: `Exception`
+monorepo_builder_core.py:129:24: BLE001 Do not catch blind exception: `Exception`
+monorepo_builder_core.py:134:115: RUF013 PEP 484 prohibits implicit `Optional`
+monorepo_builder_core.py:223:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+monorepo_builder_core.py:223:24: BLE001 Do not catch blind exception: `Exception`
+monorepo_builder_core.py:244:20: BLE001 Do not catch blind exception: `Exception`
+monorepo_builder_core.py:304:17: S110 `try`-`except`-`pass` detected, consider logging the exception
+monorepo_builder_core.py:304:24: BLE001 Do not catch blind exception: `Exception`
+monorepo_builder_core.py:350:13: S110 `try`-`except`-`pass` detected, consider logging the exception
+monorepo_builder_core.py:350:20: BLE001 Do not catch blind exception: `Exception`
+monorepo_builder_core.py:374:9: S110 `try`-`except`-`pass` detected, consider logging the exception
+monorepo_builder_core.py:374:16: BLE001 Do not catch blind exception: `Exception`
+monorepo_builder_core.py:407:20: BLE001 Do not catch blind exception: `Exception`
+monorepo_builder_core.py:506:12: BLE001 Do not catch blind exception: `Exception`
+security.py:80:40: UP045 [*] Use `X | None` for type annotations
+security.py:103:33: UP045 [*] Use `X | None` for type annotations
+security.py:112:33: UP045 [*] Use `X | None` for type annotations
+security.py:120:60: UP045 [*] Use `X | None` for type annotations
+security.py:141:36: UP045 [*] Use `X | None` for type annotations
+security.py:154:48: UP045 [*] Use `X | None` for type annotations
+tests/conftest.py:31:34: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tests/conftest.py:32:26: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tests/conftest.py:33:23: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tests/conftest.py:34:12: F401 [*] `dockerhub_cleanup` imported but unused
+tests/conftest.py:34:31: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tests/conftest.py:35:30: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tests/conftest.py:36:33: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tests/conftest.py:37:29: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tests/conftest.py:38:18: RUF100 [*] Unused `noqa` directive (non-enabled: `E402`)
+tests/test_builder_core.py:107:23: TRY002 Create your own exception
+tests/test_builder_core.py:162:12: F401 [*] `subprocess` imported but unused
+tests/test_builder_core.py:191:17: RUF012 Mutable default value for class attribute
+tests/test_builder_core.py:192:25: RUF012 Mutable default value for class attribute
+tests/test_builder_core.py:193:19: RUF012 Mutable default value for class attribute
+tests/test_builder_core.py:194:19: RUF012 Mutable default value for class attribute
+tests/test_cicd.py:84:15: TRY002 Create your own exception
+tests/test_cicd.py:89:5: S110 `try`-`except`-`pass` detected, consider logging the exception
+tests/test_cicd.py:89:12: BLE001 Do not catch blind exception: `Exception`
+tests/test_dockerhub_cleanup.py:6:8: F401 [*] `builder_core` imported but unused
+tests/test_dockerhub_cleanup.py:100:49: UP017 [*] Use `datetime.UTC` alias
+tests/test_security.py:1:1: I001 [*] Import block is un-sorted or un-formatted
+Found 605 errors.
+[*] 286 fixable with `--fix` (11 unsafe fixes available with `--fix --unsafe-fixes`).
