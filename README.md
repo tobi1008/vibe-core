@@ -85,6 +85,7 @@
 | [archive_builder_core.py](archive_builder_core.py) | Triển khai từ file nén; giải nén an toàn (chống Zip Slip / path traversal). |
 | [cicd_core.py](cicd_core.py) | CI/CD: cập nhật mã nguồn, build image theo phiên bản, rolling update trên K3s. |
 | [file_manager_api.py](file_manager_api.py) | Router `/api/project`: duyệt, đọc, ghi file trong workspace; push lên GitHub của người dùng. |
+| [docker_janitor.py](docker_janitor.py) | Tự dọn build cache và image Docker cũ trên máy build sau mỗi pipeline. |
 | [dockerhub_cleanup.py](dockerhub_cleanup.py) | Dọn rác Docker Hub: tìm repo mồ côi và tag cũ, xem trước rồi mới xóa. |
 | [hermes_agent_router.py](hermes_agent_router.py) | Router `/api/ai-debug`: chẩn đoán lỗi bằng AI, thực thi hành động khắc phục, chat với AI. |
 | [builder.py](builder.py) | Bản prototype đầu tiên dạng script CLI, giữ lại để tham khảo quá trình phát triển; API không sử dụng. |
@@ -236,6 +237,10 @@ curl -X POST -H "X-API-Key: $VIBE_API_KEY" -H "Content-Type: application/json" \
   http://localhost:8080/api/dockerhub/cleanup
 ```
 
+### Tự dọn Docker trên máy build
+
+Sau mỗi pipeline (thành công hay thất bại), `docker_janitor.py` chạy nền `docker builder prune --max-used-space 5gb` (giữ build cache tối đa 5 GB để build sau vẫn nhanh) và `docker image prune -a --filter until=2h` (xóa image không container nào dùng và đã tạo quá 2 giờ; image đã nằm trên Docker Hub, ngưỡng thời gian tránh xóa image của pipeline khác đang build dở). Hai lượt dọn không chạy chồng nhau. Kết quả ghi ở log `docker-janitor`.
+
 ### File Manager và Git (prefix `/api/project`)
 
 | Method | Endpoint | Mô tả |
@@ -340,6 +345,9 @@ Tạo file `.env` trong thư mục gốc của dự án. File này đã nằm tr
 | `DOCKERHUB_PROTECTED_REPOS` | Khuyến nghị | Các repo Docker Hub không do Vibe Hosting tạo, cách nhau bởi dấu phẩy (vd `my-blog,vibe-core`). Công cụ dọn rác không bao giờ đụng tới. |
 | `DOCKERHUB_KEEP_TAGS` | Không | Số tag mới nhất luôn giữ lại trong mỗi repo khi dọn rác. Mặc định `3`. |
 | `DOCKERHUB_GRACE_HOURS` | Không | Bỏ qua repo / tag vừa cập nhật trong số giờ này (pipeline có thể đang push). Mặc định `1`. |
+| `DOCKER_JANITOR` | Không | Đặt `0` để tắt tự dọn Docker sau mỗi lần build. |
+| `DOCKER_BUILD_CACHE_MAX` | Không | Dung lượng build cache tối đa giữ lại. Mặc định `5gb`. |
+| `DOCKER_IMAGE_MAX_AGE` | Không | Chỉ xóa image local tạo trước khoảng này. Mặc định `2h`. |
 | `HERMES_API_URL` | Không | Endpoint của Hermes. Mặc định `http://127.0.0.1:8645/v1/chat/completions`. |
 | `INTERNAL_BEARER_TOKEN` | Không | Bearer token gửi tới Hermes. |
 | `AGY_BIN_PATH`, `CLAUDE_BIN_PATH` | Không | Đường dẫn tới CLI nếu không nằm trong `PATH`. |

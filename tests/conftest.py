@@ -122,6 +122,7 @@ def no_real_docker_login(tmp_path, monkeypatch):
     """Không đọc ~/.docker/config.json thật của máy chạy test"""
     monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path / "docker-config"))
     monkeypatch.setattr(builder_core, "DOCKER_PASSWORD", None)
+    monkeypatch.setenv("DOCKER_JANITOR", "0")  # không chạy docker prune thật
 
 
 @pytest.fixture(autouse=True)

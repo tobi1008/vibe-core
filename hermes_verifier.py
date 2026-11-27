@@ -20,8 +20,11 @@ from typing import Any, Callable, Dict, List, Optional
 
 import app_scope
 import builder_core
+import docker_janitor
 from builder_core import K8S_NAMESPACE, run_hermes_json
 from security import redact_secrets
+
+JANITOR_LOG = "docker-janitor"
 
 # Image Next.js/Node có thể vài trăm MB tới hơn 1GB, lần đầu K3s kéo image mất vài phút
 ROLLOUT_TIMEOUT = int(os.getenv("VERIFY_ROLLOUT_TIMEOUT", "600"))
@@ -554,4 +557,7 @@ def finalize_pipeline(app_name: str, workloads: List[str], error: Optional[str] 
     else:
         log(app_name, f"=== [THẤT BẠI] {app_name} chưa chạy ổn định, xem báo cáo Hermes ở trên ===")
         log(app_name, "ERROR")
+    # Dọn build cache/image cũ chạy nền, ghi log riêng để không chen vào log triển khai sau dấu DONE/ERROR
+    docker_janitor.cleanup_async(
+        app_name, lambda app, msg: builder_core.write_log(JANITOR_LOG, f"[{app}] {msg}"))
     return ok
