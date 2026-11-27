@@ -148,6 +148,26 @@ def check_k3s_nodes() -> Dict[str, Dict[str, Any]]:
     return checks
 
 
+def collect_latest(apps: List[str]) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """Chạy các check cho từng app và VPS, chỉ trả kết quả (không đụng trạng thái cảnh báo)"""
+    latest: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for app in apps:
+        if recently_deploying(app):
+            continue
+        try:
+            latest[app] = check_app(app)
+        except Exception as e:
+            builder_core.write_log(LOG_NAME, f"⚠️ Kiểm tra {app} lỗi: {e}")
+    vps_checks: Dict[str, Dict[str, Any]] = {}
+    for collector in (check_manager_node, check_k3s_nodes):
+        try:
+            vps_checks.update(collector())
+        except Exception as e:
+            builder_core.write_log(LOG_NAME, f"⚠️ {collector.__name__} lỗi: {e}")
+    latest["vps"] = vps_checks
+    return latest
+
+
 # ─────────────────────────── Bộ giám sát ───────────────────────────
 
 class Monitor:
@@ -211,32 +231,15 @@ class Monitor:
         self.state["checks"] = {k: v for k, v in self.state["checks"].items() if k.split("|", 1)[0] in keep}
 
     def check_once(self) -> List[Dict[str, Any]]:
-        events: List[Dict[str, Any]] = []
         apps = hermes_tools.all_app_names()
-        for app in apps:
-            if recently_deploying(app):
-                continue
-            try:
-                checks = check_app(app)
-            except Exception as e:
-                builder_core.write_log(LOG_NAME, f"⚠️ Kiểm tra {app} lỗi: {e}")
-                continue
-            self.latest[app] = checks
+        latest = collect_latest(apps)
+        events: List[Dict[str, Any]] = []
+        for scope, checks in latest.items():
             for key, result in checks.items():
-                events.extend(self.update_check(app, key, result))
-
-        vps_checks: Dict[str, Dict[str, Any]] = {}
-        for collector in (check_manager_node, check_k3s_nodes):
-            try:
-                vps_checks.update(collector())
-            except Exception as e:
-                builder_core.write_log(LOG_NAME, f"⚠️ {collector.__name__} lỗi: {e}")
-        self.latest["vps"] = vps_checks
-        for key, result in vps_checks.items():
-            events.extend(self.update_check("vps", key, result))
-
+                events.extend(self.update_check(scope, key, result))
+        # App đang triển khai không được kiểm tra lượt này: giữ số liệu lần trước
+        self.latest = {**{k: v for k, v in self.latest.items() if k in apps}, **latest}
         self.forget_missing(apps)
-        self.latest = {k: v for k, v in self.latest.items() if k in apps or k == "vps"}
         self._save_state()
         return events
 
@@ -310,6 +313,20 @@ class Monitor:
                 tg.send_message(chat_id, self.daily_report_for(link["user_id"]))
             except Exception as e:
                 builder_core.write_log(LOG_NAME, f"⚠️ Gửi báo cáo ngày tới {chat_id} lỗi: {e}")
+
+    def send_test_report(self, user_id: str) -> int:
+        """Admin bấm "Gửi thử" trên web: kiểm tra mới ngay rồi gửi báo cáo cho các chat của chính user đó.
+        Không đổi trạng thái cảnh báo và không tính là đã gửi báo cáo hằng ngày"""
+        chats = telegram_links.chats_for_user(user_id)
+        if not chats:
+            return 0
+        snapshot = Monitor.__new__(Monitor)
+        snapshot.state = self.state
+        snapshot.latest = collect_latest(hermes_tools.visible_apps(user_id))
+        text = "🧪 Gửi thử theo yêu cầu từ trang quản trị\n\n" + snapshot.daily_report_for(user_id)
+        for chat_id in chats:
+            tg.send_message(chat_id, text)
+        return len(chats)
 
     # ---- vòng lặp ----
     def run_forever(self, stop: threading.Event) -> None:

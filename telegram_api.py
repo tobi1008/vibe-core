@@ -121,6 +121,25 @@ def unlink(user_id: str = Query(..., min_length=1)):
     return {"status": "success", "removed": removed}
 
 
+class TestReportRequest(BaseModel):
+    user_id: str
+
+
+@router.post("/daily-report/test")
+def send_test_daily_report(req: TestReportRequest):
+    """Gửi ngay báo cáo hằng ngày cho Telegram của user (admin bấm trên web để thử)"""
+    if not tg.is_configured():
+        raise HTTPException(status_code=503, detail="Máy chủ chưa cấu hình bot Telegram.")
+    from hermes_monitor import monitor
+    try:
+        sent = monitor.send_test_report(req.user_id.strip())
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Không gửi được báo cáo: {str(e)[:200]}")
+    if not sent:
+        raise HTTPException(status_code=400, detail="Tài khoản của bạn chưa liên kết Telegram. Bấm \"Liên kết Telegram\" trước.")
+    return {"status": "success", "sent": sent}
+
+
 def _acquire_single_instance_lock() -> bool:
     """Chỉ một tiến trình được nhận tin Telegram (tránh nhiều worker cùng getUpdates)"""
     global _lock_handle

@@ -852,3 +852,35 @@ def test_debug_command_asks_hermes_to_diagnose(env, monkeypatch):
     monkeypatch.setattr(env["bot"], "converse", lambda chat, uid, text: asked.append(text))
     env["bot"].handle_message(private_message(111, "/debug shop trang chủ báo 502"))
     assert "diagnose" in asked[0] and "shop" in asked[0] and "trang chủ báo 502" in asked[0]
+
+
+# ─────────────────────────── Gửi thử báo cáo hằng ngày ───────────────────────────
+
+FRESH = {"shop": {"pod:deployment/shop": {"level": "ok", "detail": "1/1 Ready"}},
+         "vps": {"vps:manager:disk": {"level": "ok", "detail": "Nút quản lý – ổ đĩa 40%"}}}
+
+
+def test_test_report_goes_only_to_requester_and_keeps_schedule(env, monkeypatch):
+    link(111, "u-admin")
+    link(222, "u-alice")
+    monkeypatch.setattr(hermes_monitor, "collect_latest", lambda apps: FRESH)
+    mon = hermes_monitor.Monitor()
+    mon.state["last_daily"] = "2026-11-26"
+    assert mon.send_test_report("u-admin") == 1
+    assert [m[0] for m in env["sent"]] == [111]
+    assert env["sent"][0][1].startswith("🧪 Gửi thử") and "📋 Báo cáo hằng ngày" in env["sent"][0][1]
+    assert "🟢 shop" in env["sent"][0][1] and "ổ đĩa 40%" in env["sent"][0][1]
+    assert mon.state["last_daily"] == "2026-11-26" and mon.latest == {}
+
+
+def test_test_report_api(env, client, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:fake")
+    monkeypatch.setattr(hermes_monitor, "collect_latest", lambda apps: FRESH)
+    headers = {"X-API-Key": API_KEY}
+    res = client.post("/api/telegram/daily-report/test", json={"user_id": "u-admin"}, headers=headers)
+    assert res.status_code == 400 and "chưa liên kết" in res.json()["detail"]
+    link(111, "u-admin")
+    res = client.post("/api/telegram/daily-report/test", json={"user_id": "u-admin"}, headers=headers)
+    assert res.json() == {"status": "success", "sent": 1}
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN")
+    assert client.post("/api/telegram/daily-report/test", json={"user_id": "u-admin"}, headers=headers).status_code == 503
