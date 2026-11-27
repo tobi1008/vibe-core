@@ -14,7 +14,6 @@ import hermes_butler
 import hermes_monitor
 import hermes_tools
 import main
-import telegram_api
 import telegram_client
 import telegram_links
 import user_directory
@@ -43,6 +42,8 @@ def env(tmp_path, monkeypatch, paths):
     """Liên kết lưu ở thư mục tạm, danh bạ người dùng giả, tin Telegram gửi vào danh sách `sent`"""
     monkeypatch.setattr(telegram_links, "LINKS_FILE", str(tmp_path / "links.json"))
     monkeypatch.setattr(hermes_monitor, "STATE_FILE", str(tmp_path / "monitor.json"))
+    monkeypatch.setattr(telegram_client, "CONFIG_FILE", str(tmp_path / "telegram_config.json"))
+    monkeypatch.setattr(telegram_client, "STATUS_FILE", str(tmp_path / "butler_status.json"))
     monkeypatch.setattr(user_directory, "get_directory", lambda force=False: DIRECTORY)
     monkeypatch.setattr(hermes_tools, "all_app_names", lambda: ["blog", "shop"])
     monkeypatch.setattr(hermes_tools, "app_domains", lambda app: [f"{app}.vibe.quyenlt.com"])
@@ -416,7 +417,6 @@ def test_link_code_api_requires_bot_configured(env, client, monkeypatch):
 def test_link_code_api_returns_deep_link(env, client, monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:fake")
     monkeypatch.setenv("TELEGRAM_BOT_USERNAME", "vibe_hermes_bot")
-    monkeypatch.setattr(telegram_api, "_bot_username", None)
     res = client.post("/api/telegram/link-code", json={"user_id": "u-alice", "username": "alice"}, headers={"X-API-Key": API_KEY})
     body = res.json()
     assert res.status_code == 200
@@ -434,6 +434,91 @@ def test_unlink_api(env, client):
     res = client.delete("/api/telegram/link", params={"user_id": "u-alice"}, headers={"X-API-Key": API_KEY})
     assert res.json()["removed"] == 1
     assert telegram_links.get_link(111) is None
+
+
+GOOD_TOKEN = "123456789:AAH" + "x" * 32
+
+
+def test_config_rejects_malformed_token(env, client, monkeypatch):
+    called = []
+    monkeypatch.setattr(telegram_client, "get_me", lambda token=None: called.append(token))
+    res = client.put("/api/telegram/config", json={"token": "abc"}, headers={"X-API-Key": API_KEY})
+    assert res.status_code == 400 and called == []
+
+
+def test_config_rejects_token_telegram_refuses(env, client, monkeypatch):
+    def refuse(token=None):
+        raise RuntimeError(f"Telegram getMe lỗi: Unauthorized (url .../bot{token}/getMe)")
+    monkeypatch.setattr(telegram_client, "get_me", refuse)
+    res = client.put("/api/telegram/config", json={"token": GOOD_TOKEN}, headers={"X-API-Key": API_KEY})
+    assert res.status_code == 400
+    assert GOOD_TOKEN not in res.text
+    assert not (env["tmp"] / "telegram_config.json").exists()
+
+
+def test_config_saves_valid_token_and_masks_it(env, client, monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_BOT_USERNAME", raising=False)
+    monkeypatch.setattr(telegram_client, "get_me",
+                        lambda token=None: {"is_bot": True, "username": "vibe_hermes_bot"})
+    res = client.put("/api/telegram/config", json={"token": f"  {GOOD_TOKEN} "}, headers={"X-API-Key": API_KEY})
+    body = res.json()
+    assert res.status_code == 200
+    assert body["configured"] and body["source"] == "web" and body["bot_username"] == "vibe_hermes_bot"
+    assert GOOD_TOKEN not in res.text and body["token_hint"].startswith("123456789:AAH…")
+    assert telegram_client.bot_token() == GOOD_TOKEN
+    assert oct((env["tmp"] / "telegram_config.json").stat().st_mode & 0o777) == "0o600"
+
+    link_res = client.post("/api/telegram/link-code", json={"user_id": "u-alice"}, headers={"X-API-Key": API_KEY})
+    assert link_res.json()["link"].startswith("https://t.me/vibe_hermes_bot?start=")
+
+    res = client.delete("/api/telegram/config", headers={"X-API-Key": API_KEY})
+    assert res.json()["removed"] is True and res.json()["configured"] is False
+
+
+def test_web_token_takes_priority_over_env(env, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "111:env")
+    assert telegram_client.token_source() == "env"
+    telegram_client.save_config(GOOD_TOKEN, "web_bot")
+    assert telegram_client.bot_token() == GOOD_TOKEN and telegram_client.token_source() == "web"
+
+
+def test_runtime_status_goes_stale(env, monkeypatch):
+    telegram_client.write_runtime_status(running=True)
+    assert telegram_client.runtime_status()["running"] is True
+    real_time = time.time
+    monkeypatch.setattr(telegram_client.time, "time", lambda: real_time() + 600)
+    assert telegram_client.runtime_status()["running"] is False
+
+
+def test_poll_waits_without_token_then_follows_new_token(env, monkeypatch):
+    """Không có token thì chờ; admin nhập token thì bắt đầu nhận tin mà không cần khởi động lại"""
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    calls = []
+
+    class FakeStop:
+        def __init__(self):
+            self.n = 0
+
+        def is_set(self):
+            return self.n >= 3
+
+        def wait(self, _seconds):
+            self.n += 1
+            if self.n == 1:
+                telegram_client.save_config(GOOD_TOKEN, "bot")
+
+    stop = FakeStop()
+
+    def fake_updates(offset, poll_timeout=50):
+        calls.append(offset)
+        stop.n += 1
+        return []
+
+    monkeypatch.setattr(telegram_client, "get_updates", fake_updates)
+    env["bot"].poll_forever(stop)
+    assert calls == [None, None]
+    assert telegram_client.runtime_status()["running"] is True
 
 
 def test_links_file_is_valid_json(env):

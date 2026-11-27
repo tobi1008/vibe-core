@@ -270,9 +270,14 @@ Người dùng liên kết Telegram ở trang hồ sơ của Vibe Hosting rồi 
 
 | Method | Endpoint | Mô tả |
 |---|---|---|
+| GET | `/config` | Trạng thái bot: đã có token chưa, lấy từ đâu (`web`/`env`), tên bot, token đã che, bot có đang nhận tin không |
+| PUT | `/config` | Admin lưu token bot (frontend kiểm tra quyền admin). Token được kiểm tra bằng `getMe` trước khi lưu |
+| DELETE | `/config` | Gỡ token đã nhập trên web |
 | POST | `/link-code` | Frontend tạo mã liên kết dùng một lần (hết hạn sau 10 phút) cho `user_id` đang đăng nhập; trả về đường dẫn `t.me/<bot>?start=<mã>` |
 | GET | `/status?user_id=` | Trạng thái liên kết của người dùng |
 | DELETE | `/link?user_id=` | Hủy liên kết |
+
+Bật bot: admin vào trang hồ sơ trên web, làm theo hướng dẫn tạo bot với @BotFather rồi dán token vào ô **Cấu hình bot Telegram**. Token lưu ở `telegram_config.json` (quyền 600) và được ưu tiên hơn biến `TELEGRAM_BOT_TOKEN`. Bot nhận token mới trong vòng khoảng 30 giây, không cần khởi động lại API.
 
 Cách hoạt động:
 
@@ -337,7 +342,7 @@ Tạo file `.env` trong thư mục gốc của dự án. File này đã nằm tr
 | `HERMES_API_URL` | Không | Endpoint của Hermes. Mặc định `http://127.0.0.1:8645/v1/chat/completions`. |
 | `INTERNAL_BEARER_TOKEN` | Không | Bearer token gửi tới Hermes. |
 | `AGY_BIN_PATH`, `CLAUDE_BIN_PATH` | Không | Đường dẫn tới CLI nếu không nằm trong `PATH`. |
-| `TELEGRAM_BOT_TOKEN` | Không | Token bot Telegram (tạo bằng @BotFather). Có biến này thì Hermes Butler và Hermes Monitor tự chạy khi API khởi động. |
+| `TELEGRAM_BOT_TOKEN` | Không | Token bot Telegram (tạo bằng @BotFather). Thường không cần: admin nhập token trên trang hồ sơ, token nhập trên web được ưu tiên. |
 | `TELEGRAM_BOT_USERNAME` | Không | Tên bot (không có @). Bỏ trống thì lấy tự động qua `getMe`. |
 | `FRONTEND_URL` | Không | Địa chỉ frontend để tra quyền sở hữu app. Mặc định `https://vibe.quyenlt.com`. |
 | `HERMES_BUTLER` | Không | Đặt `0` để tắt bot và giám sát dù đã có token. |
@@ -369,6 +374,8 @@ Các thư mục sau được tạo tự động trong `/opt/vibe-hosting` và kh
 | `backups/` | File backup database được tải lên |
 | `uploads/` | File nén được tải lên |
 | `apps_config.json` | Cấu hình của các app (repo, loại database, trạng thái CI/CD…) |
+| `telegram_config.json` | Token bot Telegram admin nhập trên web (quyền 600) |
+| `hermes_butler_status.json` | Nhịp tim của bot, để web biết bot có đang nhận tin không |
 | `telegram_links.json` | Liên kết Telegram ↔ tài khoản và mã liên kết đang chờ |
 | `monitor_state.json` | Trạng thái giám sát (để chỉ cảnh báo khi trạng thái thay đổi) |
 

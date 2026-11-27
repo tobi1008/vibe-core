@@ -212,6 +212,10 @@ def run_agent(chat_id: int, user_id: str, history: List[Dict[str, str]], message
 
 # ─────────────────────────── Bot Telegram ───────────────────────────
 
+# Long polling ngắn để đổi token trên web có hiệu lực trong vòng nửa phút
+POLL_TIMEOUT = 25
+TOKEN_RECHECK_SECONDS = 5
+
 HELP_TEXT = (
     "Mình là Hermes, quản gia của Vibe Hosting. Bạn có thể nhắn tự nhiên, ví dụ:\n"
     "• \"app shop đang lỗi gì vậy?\"\n"
@@ -386,13 +390,27 @@ class Butler:
 
     # ---- long polling ----
     def poll_forever(self, stop: threading.Event) -> None:
+        """Chạy suốt vòng đời API. Chưa có token thì chờ; admin đổi token trên web thì tự chuyển sang bot mới"""
         offset: Optional[int] = None
-        builder_core.write_log(LOG_NAME, "🤖 Hermes Butler bắt đầu nhận tin nhắn Telegram.")
+        current_token = ""
         while not stop.is_set():
+            token = tg.bot_token()
+            if not token:
+                if current_token:
+                    builder_core.write_log(LOG_NAME, "⏸️ Bot Telegram đã bị gỡ, Hermes Butler tạm dừng.")
+                current_token = ""
+                tg.write_runtime_status(running=False)
+                stop.wait(TOKEN_RECHECK_SECONDS)
+                continue
+            if token != current_token:
+                builder_core.write_log(LOG_NAME, "🤖 Hermes Butler bắt đầu nhận tin nhắn Telegram.")
+                current_token, offset = token, None
             try:
-                updates = tg.get_updates(offset)
+                updates = tg.get_updates(offset, poll_timeout=POLL_TIMEOUT)
+                tg.write_runtime_status(running=True)
             except Exception as e:
                 builder_core.write_log(LOG_NAME, f"⚠️ getUpdates lỗi: {e}")
+                tg.write_runtime_status(running=True, error=str(e))
                 stop.wait(10)
                 continue
             for update in updates:

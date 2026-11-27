@@ -1,9 +1,14 @@
 """
 Client tối giản cho Telegram Bot API (gọi HTTP trực tiếp bằng requests, không thêm thư viện).
-Token bot đọc từ biến môi trường TELEGRAM_BOT_TOKEN.
+Token bot do admin nhập trên giao diện web (lưu ở CONFIG_FILE); nếu chưa nhập thì dùng
+biến môi trường TELEGRAM_BOT_TOKEN.
 """
 
+import json
 import os
+import re
+import threading
+import time
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -15,16 +20,71 @@ API_BASE = "https://api.telegram.org"
 MAX_MESSAGE_CHARS = 3900
 
 
+CONFIG_FILE = "/opt/vibe-hosting/telegram_config.json"
+# Định dạng token BotFather cấp: <id số>:<35 ký tự trở lên>
+TOKEN_PATTERN = re.compile(r"^\d{5,15}:[A-Za-z0-9_-]{30,}$")
+
+_config_lock = threading.Lock()
+
+
+def load_config() -> Dict[str, Any]:
+    """Cấu hình bot admin lưu từ web: {"token", "username"}. Không có tệp thì trả về {}"""
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_config(token: str, username: str) -> None:
+    """Ghi tạm rồi đổi tên, quyền 600 vì tệp chứa token bot"""
+    with _config_lock:
+        os.makedirs(os.path.dirname(CONFIG_FILE) or ".", exist_ok=True)
+        tmp = f"{CONFIG_FILE}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"token": token, "username": username}, f)
+        os.replace(tmp, CONFIG_FILE)
+
+
+def clear_config() -> bool:
+    with _config_lock:
+        try:
+            os.remove(CONFIG_FILE)
+            return True
+        except FileNotFoundError:
+            return False
+
+
+def token_source() -> Optional[str]:
+    """Token đang dùng lấy từ đâu: "web" (admin nhập), "env" (biến môi trường) hoặc None"""
+    if load_config().get("token"):
+        return "web"
+    if os.getenv("TELEGRAM_BOT_TOKEN"):
+        return "env"
+    return None
+
+
 def bot_token() -> str:
-    return os.getenv("TELEGRAM_BOT_TOKEN", "")
+    return load_config().get("token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+
+
+def mask_token(token: str) -> str:
+    """123456789:AAE…wxyz, đủ để nhận ra token nào mà không lộ token"""
+    if not token:
+        return ""
+    bot_id, _, secret = token.partition(":")
+    return f"{bot_id}:{secret[:3]}…{secret[-4:]}" if len(secret) > 8 else f"{bot_id}:…"
 
 
 def is_configured() -> bool:
     return bool(bot_token())
 
 
-def _call(method: str, payload: Optional[Dict[str, Any]] = None, timeout: int = 30) -> Any:
-    token = bot_token()
+def _call(method: str, payload: Optional[Dict[str, Any]] = None, timeout: int = 30,
+          token: Optional[str] = None) -> Any:
+    token = token or bot_token()
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN chưa được cấu hình")
     resp = requests.post(f"{API_BASE}/bot{token}/{method}", json=payload or {}, timeout=timeout)
@@ -99,5 +159,33 @@ def get_updates(offset: Optional[int], poll_timeout: int = 50) -> List[Dict[str,
     return _call("getUpdates", payload, timeout=poll_timeout + 10) or []
 
 
-def get_me() -> Dict[str, Any]:
-    return _call("getMe", timeout=10)
+def get_me(token: Optional[str] = None) -> Dict[str, Any]:
+    return _call("getMe", timeout=10, token=token)
+
+
+# ---- trạng thái chạy của bot ----
+# Tiến trình giữ vòng nhận tin ghi nhịp tim vào tệp này; worker nào trả lời API cũng đọc được
+STATUS_FILE = "/opt/vibe-hosting/hermes_butler_status.json"
+HEARTBEAT_STALE_SECONDS = 120
+
+
+def write_runtime_status(running: bool, error: str = "") -> None:
+    try:
+        tmp = f"{STATUS_FILE}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"running": running, "heartbeat": time.time(),
+                       "error": redact_secrets(error.replace(bot_token() or "\0", "***"))[:300]}, f)
+        os.replace(tmp, STATUS_FILE)
+    except OSError:
+        pass
+
+
+def runtime_status() -> Dict[str, Any]:
+    """{"running": bot đang nhận tin, "error": lỗi gần nhất}; nhịp tim quá cũ coi như không chạy"""
+    try:
+        with open(STATUS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {"running": False, "error": ""}
+    fresh = time.time() - float(data.get("heartbeat", 0)) < HEARTBEAT_STALE_SECONDS
+    return {"running": bool(data.get("running")) and fresh, "error": data.get("error", "") if fresh else ""}

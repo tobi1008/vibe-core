@@ -315,6 +315,9 @@ class Monitor:
     def run_forever(self, stop: threading.Event) -> None:
         builder_core.write_log(LOG_NAME, f"🩺 Hermes Monitor chạy mỗi {MONITOR_INTERVAL} giây.")
         while not stop.is_set():
+            if not tg.is_configured():
+                stop.wait(30)
+                continue
             try:
                 events = self.check_once()
                 if telegram_links.all_links():
