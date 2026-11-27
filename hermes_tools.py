@@ -166,9 +166,18 @@ def tool_list_apps(user_id: str, args: Dict[str, Any]) -> str:
     if not apps:
         return "Tài khoản chưa có ứng dụng nào."
     lines = [f"Có {len(apps)} ứng dụng:"]
+    orphans = 0
     for app in apps:
         domains = app_domains(app)
-        lines.append(f"- {app}" + (f" ({', '.join(domains)})" if domains else ""))
+        line = f"- {app}" + (f" ({', '.join(domains)})" if domains else "")
+        # Chỉ admin thấy app không thuộc ai: còn cấu hình trên Vibe Core nhưng không còn project trên web
+        if not user_directory.owners_of(app):
+            line += " ⚠️ không có chủ trên web"
+            orphans += 1
+        lines.append(line)
+    if orphans:
+        lines.append(f"\n{orphans} app không còn project trên web (cấu hình sót lại trên máy chủ). "
+                     "Hermes không xóa được app; admin dọn trên web hoặc trên máy chủ.")
     return "\n".join(lines)
 
 

@@ -50,6 +50,13 @@ QUY TẮC:
    bạn không cần hỏi lại bằng lời. Ưu tiên cách ít rủi ro: xem log và trạng thái trước, rồi mới đề xuất khởi động lại,
    rollback hoặc build lại. Khi cần sửa cấu hình/mã nguồn, dùng công cụ diagnose.
 5. Câu trả lời cuối nêu rõ: tình trạng hiện tại, nguyên nhân (nếu tìm được) và việc nên làm tiếp theo.
+6. TRUNG THỰC: chỉ nói một việc đã được làm khi có KẾT QUẢ công cụ ở lượt này, hoặc dòng "[Hệ thống]" trong hội thoại
+   báo đã thực hiện thành công. Không bao giờ tự nhận đã xóa, tạo, sửa hay khởi động lại thứ gì nếu không có bằng chứng đó.
+   Nếu câu trả lời cũ của chính bạn trong hội thoại mâu thuẫn với kết quả công cụ, tin kết quả công cụ và nói rõ là mình đã nhầm.
+7. Bạn KHÔNG có công cụ xóa ứng dụng, tạo ứng dụng, đổi tên miền, quản lý tài khoản hay sửa máy chủ. Người dùng yêu cầu
+   những việc này thì nói thẳng là không làm được qua Telegram và chỉ chỗ làm trên web {web_url} (xóa app: vào trang
+   ứng dụng trên dashboard). Không giả vờ đã làm.
+8. Muốn kiểm tra gì thì gọi công cụ ngay trong lượt này, không trả lời kiểu "mình sẽ kiểm tra lại".
 
 Ứng dụng của người dùng: {apps}
 """
@@ -129,7 +136,7 @@ def build_prompt(user_id: str, history: List[Dict[str, str]], message: str, step
         apps = ", ".join(hermes_tools.visible_apps(user_id)) or "(chưa có ứng dụng)"
     except user_directory.DirectoryUnavailable:
         apps = "(không tra cứu được)"
-    parts = [SYSTEM_PROMPT.format(tools=hermes_tools.describe_tools(), apps=apps)]
+    parts = [SYSTEM_PROMPT.format(tools=hermes_tools.describe_tools(), apps=apps, web_url=WEB_URL)]
     if history:
         parts.append("--- HỘI THOẠI TRƯỚC ---")
         for h in history[-HISTORY_TURNS:]:
@@ -375,11 +382,18 @@ class Butler:
                 return
             if kind == "rj":
                 self.send(chat_id, f"Đã bỏ qua: {approval['description']}")
+                self.record_system_note(chat_id, f"Người dùng bỏ qua, KHÔNG thực hiện: {approval['description']}")
                 return
             self.executor.submit(self.execute_approval, approval)
         elif kind == "dg":
             text = f"Ứng dụng {value} vừa được báo có sự cố. Hãy kiểm tra nguyên nhân và đề xuất cách xử lý."
             self.executor.submit(self.converse, chat_id, link["user_id"], text)
+
+    def record_system_note(self, chat_id: int, note: str) -> None:
+        """Ghi kết quả thật của thao tác vào hội thoại để Hermes không nhớ sai việc đã/chưa làm"""
+        history = self.history.setdefault(chat_id, [])
+        history.append({"role": "assistant", "content": f"[Hệ thống] {note}"[:1000]})
+        del history[:-HISTORY_TURNS * 2]
 
     def execute_approval(self, approval: Dict[str, Any]) -> None:
         chat_id = approval["chat_id"]
@@ -389,11 +403,14 @@ class Butler:
             output = hermes_tools.run_tool(approval["user_id"], approval["tool"], approval["args"], include_internal=True)
             builder_core.write_log(LOG_NAME, f"✅ user {approval['user_id']} duyệt: {approval['description']}")
             self.send(chat_id, f"✅ {output}")
+            self.record_system_note(chat_id, f"Đã thực hiện thành công: {approval['description']}. Kết quả: {output}")
         except hermes_tools.ToolError as e:
             self.send(chat_id, f"⚠️ Không thực hiện được: {e}")
+            self.record_system_note(chat_id, f"KHÔNG thực hiện được: {approval['description']}. Lỗi: {e}")
         except Exception as e:
             builder_core.write_log(LOG_NAME, f"⚠️ Thực thi {approval['tool']} lỗi: {e}")
             self.send(chat_id, f"⚠️ Lỗi khi thực hiện: {str(e)[:300]}")
+            self.record_system_note(chat_id, f"KHÔNG thực hiện được: {approval['description']}. Lỗi: {str(e)[:300]}")
 
     # ---- long polling ----
     def poll_forever(self, stop: threading.Event) -> None:

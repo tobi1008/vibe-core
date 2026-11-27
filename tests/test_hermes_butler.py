@@ -764,3 +764,32 @@ def test_telegram_never_offers_apply_manifest(env, monkeypatch):
     with pytest.raises(hermes_tools.ToolError):
         hermes_tools.run_tool("u-alice", "apply_fix", {"app": "shop", "action": {
             "action_type": "apply_manifest", "content": "kind: Ingress", "description": "x"}}, include_internal=True)
+
+
+# ─────────────────────────── Không bịa thao tác ───────────────────────────
+
+def test_prompt_forbids_claiming_actions_without_tool_results(env):
+    prompt = hermes_butler.build_prompt("u-alice", [], "xóa giúp mấy app test", [])
+    assert "KHÔNG có công cụ xóa ứng dụng" in prompt
+    assert hermes_butler.WEB_URL in prompt
+
+
+def test_approval_outcome_is_recorded_in_history(env, monkeypatch):
+    link(111, "u-alice")
+    monkeypatch.setitem(hermes_tools.TOOLS["restart_app"], "fn", lambda uid, args: "Đã khởi động lại shop.")
+    approval = hermes_butler.create_approval(111, "u-alice", "restart_app", {"app": "shop"})
+    env["bot"].handle_callback(callback(111, f"ap:{approval['id']}"))
+    rejected = hermes_butler.create_approval(111, "u-alice", "rollback_app", {"app": "shop"})
+    env["bot"].handle_callback(callback(111, f"rj:{rejected['id']}"))
+    notes = [h["content"] for h in env["bot"].history[111]]
+    assert notes[0].startswith("[Hệ thống] Đã thực hiện thành công: Khởi động lại shop")
+    assert notes[1].startswith("[Hệ thống] Người dùng bỏ qua, KHÔNG thực hiện: Rollback shop")
+    assert "[Hệ thống]" in hermes_butler.build_prompt("u-alice", env["bot"].history[111], "rồi sao", [])
+
+
+def test_list_apps_flags_apps_without_owner_for_admin(env, monkeypatch):
+    monkeypatch.setattr(hermes_tools, "all_app_names", lambda: ["blog", "old-test", "shop"])
+    out = hermes_tools.run_tool("u-admin", "list_apps", {})
+    assert "- old-test (old-test.vibe.quyenlt.com) ⚠️ không có chủ trên web" in out
+    assert "- shop (shop.vibe.quyenlt.com)\n" in out and "1 app không còn project" in out
+    assert "không có chủ" not in hermes_tools.run_tool("u-alice", "list_apps", {})
