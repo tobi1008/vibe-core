@@ -16,6 +16,7 @@ from builder_core import (
     FALLBACK_MODELS,
     write_log,
 )
+import app_scope
 from cicd_core import redeploy_app
 from security import validate_app_name, is_inside_dir, touches_git_dir, redact_secrets
 
@@ -108,6 +109,11 @@ def find_actual_k8s_resource(resource_type: str, candidate_name: str, app_name: 
     try:
         cmd = ["kubectl", "get", resource_type, "-n", K8S_NAMESPACE, "-o", "jsonpath={.items[*].metadata.name}"]
         items = subprocess.check_output(cmd, text=True, timeout=5).strip().split()
+        # Namespace dùng chung: chỉ định thẳng tài nguyên của app khác thì từ chối,
+        # còn dò gần đúng thì chỉ dò trong tài nguyên của chính app
+        if candidate_name in items:
+            app_scope.require_resource(app_name, candidate_name)
+        items = [i for i in items if app_scope.owns_resource(app_name, i)]
         if not items:
             return None
         if candidate_name in items:
@@ -152,6 +158,8 @@ def find_actual_k8s_resource(resource_type: str, candidate_name: str, app_name: 
             fe_candidates = [i for i in items if "fe" in i.lower()]
             if len(fe_candidates) == 1:
                 return fe_candidates[0]
+    except app_scope.ScopeError:
+        raise
     except Exception:
         pass
     return None
@@ -184,6 +192,8 @@ def sanitize_k8s_target(raw_target: str, resource_type: str = "deployment", app_
     # Tên tài nguyên được ghép vào lệnh shell, nên chỉ chấp nhận tên hợp lệ theo chuẩn K8s
     if not re.fullmatch(r"[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?", clean_target):
         raise ValueError(f"Tên tài nguyên K8s không hợp lệ: {clean_target[:60]}")
+    if app_name:
+        app_scope.require_resource(app_name, clean_target)
     return clean_target
 
 
@@ -309,7 +319,7 @@ def collect_debug_context(app_name: str, component: str = "be") -> Dict[str, Any
             ["kubectl", "get", "ingress", "-n", K8S_NAMESPACE, "-o", "wide"],
             capture_output=True, text=True
         )
-        context["k8s_ingresses"] = ing_res.stdout.strip()
+        context["k8s_ingresses"] = app_scope.filter_table(app_name, ing_res.stdout.strip())
     except Exception:
         pass
 
@@ -318,7 +328,7 @@ def collect_debug_context(app_name: str, component: str = "be") -> Dict[str, Any
             ["kubectl", "get", "svc", "-n", K8S_NAMESPACE],
             capture_output=True, text=True
         )
-        context["k8s_services"] = svc_res.stdout.strip()
+        context["k8s_services"] = app_scope.filter_table(app_name, svc_res.stdout.strip())
     except Exception:
         pass
 
@@ -327,7 +337,8 @@ def collect_debug_context(app_name: str, component: str = "be") -> Dict[str, Any
             ["kubectl", "get", "events", "-n", K8S_NAMESPACE, "--sort-by=.metadata.creationTimestamp"],
             capture_output=True, text=True
         )
-        context["k8s_events"] = "\n".join(events_res.stdout.splitlines()[-25:])
+        # Namespace dùng chung: chỉ gửi cho Hermes sự kiện của chính app
+        context["k8s_events"] = "\n".join(app_scope.filter_events(app_name, events_res.stdout).splitlines()[-25:])
     except Exception:
         pass
 
@@ -490,6 +501,15 @@ Services:
 
 
 def execute_remediation_action(app_name: str, action: RemediationAction) -> Dict[str, Any]:
+    """Mọi hành động chỉ được tác động lên tài nguyên của chính app (xem app_scope)"""
+    try:
+        return _execute_remediation_action(app_name, action)
+    except app_scope.ScopeError as e:
+        write_log(app_name, f"⛔ [Hermes] Từ chối hành động {action.action_type}: {e}")
+        return {"status": "error", "message": f"Từ chối: {e}"}
+
+
+def _execute_remediation_action(app_name: str, action: RemediationAction) -> Dict[str, Any]:
     comp = detect_action_component(action, default_comp="be")
     ws = resolve_workspace(app_name, comp)
 
@@ -502,6 +522,10 @@ def execute_remediation_action(app_name: str, action: RemediationAction) -> Dict
         # Tự động sửa API Version cũ của Traefik nếu Hermes vô tình dùng traefik.containo.us
         if "traefik.containo.us/v1alpha1" in manifest_yaml:
             manifest_yaml = manifest_yaml.replace("traefik.containo.us/v1alpha1", "traefik.io/v1alpha1")
+
+        # Chỉ cho phép sửa tài nguyên của chính app, cấm mọi thứ chạm tới máy chủ hay app khác
+        from hermes_tools import app_domains
+        app_scope.validate_manifest(app_name, manifest_yaml, K8S_NAMESPACE, app_domains(app_scope.base_app_name(app_name)))
 
         try:
             res = subprocess.run(

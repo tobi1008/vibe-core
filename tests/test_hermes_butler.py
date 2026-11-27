@@ -211,8 +211,8 @@ def test_diagnose_turns_each_action_into_an_approval(env, monkeypatch):
     result = hermes_butler.run_agent(111, "u-alice", [], "shop lỗi DB", llm=llm)
     assert [a["tool"] for a in result["approvals"]] == ["apply_fix", "apply_fix"]
     assert "Thiếu DB_HOST" in result["reply"]
-    assert "DB_HOST=…" in result["approvals"][0]["description"]
-    assert "shop-db-svc" not in result["approvals"][0]["description"]
+    # Giá trị thường được hiện để người duyệt biết mình duyệt gì
+    assert "DB_HOST=shop-db-svc" in result["approvals"][0]["description"]
 
 
 # ─────────────────────────── Bot: tin nhắn và nút duyệt ───────────────────────────
@@ -626,4 +626,141 @@ def test_describe_rollback_and_set_env_hide_values():
     assert hermes_tools.describe_action("rollback_app", {"app": "shop", "revision": 2}) == "Rollback shop về revision 2"
     desc = hermes_tools.describe_action("apply_fix", {"app": "shop", "action": {
         "action_type": "set_env", "env_vars": {"JWT_SECRET": "super-secret"}, "description": "Bơm JWT"}})
-    assert "JWT_SECRET=…" in desc and "super-secret" not in desc
+    assert "JWT_SECRET=(ẩn, 12 ký tự)" in desc and "super-secret" not in desc
+
+
+# ─────────────────────────── Giới hạn phạm vi theo app ───────────────────────────
+
+import app_scope  # noqa: E402
+import hermes_agent_router  # noqa: E402
+from hermes_agent_router import RemediationAction  # noqa: E402
+
+
+def test_scope_names_are_exact_not_prefix():
+    assert app_scope.owns_resource("blog", "blog-be")
+    assert app_scope.owns_resource("blog", "blog-ingress") and app_scope.owns_resource("blog", "blog-db-pvc")
+    assert not app_scope.owns_resource("blog", "personal-blog-be")
+    assert not app_scope.owns_resource("blog", "blog-shop")
+    assert not app_scope.owns_resource("3tshop", "tttn-3tshop")
+    # Pod/ReplicaSet sinh tự động
+    assert app_scope.owns_object("blog", "blog-be-7d9fbc6c5d-x2k4p")
+    assert app_scope.owns_object("blog", "blog-db-0")
+    assert not app_scope.owns_object("blog", "blog-shop-7d9fbc6c5d-x2k4p")
+    assert not app_scope.owns_object("blog", "personal-blog-7d9fbc6c5d-x2k4p")
+
+
+def test_filter_events_and_tables_keep_only_own_app():
+    events = (
+        "LAST SEEN   TYPE      REASON    OBJECT                               MESSAGE\n"
+        "1m          Warning   BackOff   pod/blog-be-7d9fbc6c5d-x2k4p         Back-off restarting\n"
+        "2m          Warning   Failed    pod/personal-blog-7d9fbc6c5d-abcde   Error\n"
+        "3m          Normal    Pulled    pod/blog-shop-6c8f9d7b5c-zzzzz       ok\n"
+    )
+    out = app_scope.filter_events("blog", events)
+    assert "blog-be-7d9fbc6c5d-x2k4p" in out and "personal-blog" not in out and "blog-shop" not in out
+    table = "NAME           CLASS\nblog-ingress   traefik\nshop-ingress   traefik\n"
+    assert app_scope.filter_table("blog", table) == "NAME           CLASS\nblog-ingress   traefik"
+
+
+def _run(*args, **kwargs):
+    return __import__("subprocess").CompletedProcess(args, 0, "", "")
+
+
+def test_remediation_cannot_target_other_app(monkeypatch):
+    calls = []
+    monkeypatch.setattr(hermes_agent_router.subprocess, "check_output",
+                        lambda cmd, **k: "blog-be personal-blog-be shop-be")
+    monkeypatch.setattr(hermes_agent_router.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _run())
+    monkeypatch.setattr(hermes_agent_router, "write_log", lambda *a, **k: None)
+    for action in (
+        RemediationAction(action_type="set_env", target="personal-blog-be", env_vars={"A": "1"}, description="x"),
+        RemediationAction(action_type="restart_deployment", target="shop-be", description="x"),
+    ):
+        res = hermes_agent_router.execute_remediation_action("blog", action)
+        assert res["status"] == "error" and "Từ chối" in res["message"]
+    assert calls == []
+    # Đúng app thì vẫn chạy
+    res = hermes_agent_router.execute_remediation_action(
+        "blog", RemediationAction(action_type="set_env", target="blog-be", env_vars={"A": "1"}, description="x"))
+    assert res["status"] == "success" and "deployment/blog-be" in calls[0]
+
+
+def test_fuzzy_match_never_picks_other_app(monkeypatch):
+    monkeypatch.setattr(hermes_agent_router.subprocess, "check_output",
+                        lambda cmd, **k: "personal-blog-be tttn-3tshop-be")
+    assert hermes_agent_router.find_actual_k8s_resource("deployment", "blog-be", "blog") is None
+    assert hermes_agent_router.find_actual_k8s_resource("deployment", "3tshop-be", "3tshop") is None
+
+
+MANIFEST_OK = """
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: blog-ingress
+spec:
+  tls:
+  - hosts: [blog.vibe.quyenlt.com]
+    secretName: blog-tls
+  rules:
+  - host: blog.vibe.quyenlt.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: blog-svc
+            port: {number: 80}
+"""
+
+
+@pytest.mark.parametrize("manifest, reason", [
+    ("kind: ClusterRoleBinding\nmetadata: {name: blog}\n", "ClusterRoleBinding"),
+    ("kind: Namespace\nmetadata: {name: blog}\n", "Namespace"),
+    ("kind: Deployment\nmetadata: {name: shop}\n", "không thuộc"),
+    ("kind: Service\nmetadata: {name: blog-svc, namespace: kube-system}\n", "namespace"),
+    ("kind: Service\nmetadata: {name: blog-svc}\nspec: {type: NodePort}\n", "ClusterIP"),
+    ("kind: Service\nmetadata: {name: blog-svc}\nspec: {selector: {app: shop}}\n", "app='shop'"),
+    (MANIFEST_OK.replace("host: blog.vibe", "host: shop.vibe"), "shop.vibe.quyenlt.com"),
+    (MANIFEST_OK.replace("name: blog-svc", "name: shop-svc"), "shop-svc"),
+    ("kind: Deployment\nmetadata: {name: blog}\nspec:\n  template:\n    spec:\n"
+     "      volumes: [{name: root, hostPath: {path: /}}]\n", "hostPath"),
+    ("kind: Deployment\nmetadata: {name: blog}\nspec:\n  template:\n    spec:\n"
+     "      containers: [{name: x, image: x, securityContext: {privileged: true}}]\n", "privileged"),
+    ("kind: Deployment\nmetadata: {name: blog}\nspec:\n  template:\n    spec:\n      hostNetwork: true\n", "hostNetwork"),
+    ("kind: Deployment\nmetadata: {name: blog}\nspec:\n  template:\n    spec:\n"
+     "      containers: [{name: x, image: x, env: [{name: P, valueFrom: {secretKeyRef: {name: shop-secret, key: p}}}]}]\n",
+     "shop-secret"),
+])
+def test_manifest_outside_app_is_rejected(manifest, reason):
+    with pytest.raises(app_scope.ScopeError, match=reason):
+        app_scope.validate_manifest("blog", manifest, "default", ["blog.vibe.quyenlt.com"])
+
+
+def test_manifest_inside_app_is_allowed():
+    assert app_scope.validate_manifest("blog", MANIFEST_OK, "default", ["blog.vibe.quyenlt.com"]) == 1
+
+
+def test_apply_manifest_rejected_before_kubectl(monkeypatch):
+    calls = []
+    monkeypatch.setattr(hermes_agent_router.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _run())
+    monkeypatch.setattr(hermes_agent_router, "write_log", lambda *a, **k: None)
+    monkeypatch.setattr(hermes_tools, "app_domains", lambda app: ["blog.vibe.quyenlt.com"])
+    res = hermes_agent_router.execute_remediation_action("blog", RemediationAction(
+        action_type="apply_manifest", content="kind: ClusterRole\nmetadata: {name: blog}\n", description="x"))
+    assert res["status"] == "error" and calls == []
+
+
+def test_telegram_never_offers_apply_manifest(env, monkeypatch):
+    monkeypatch.setattr(hermes_tools, "diagnose", lambda uid, args: {
+        "app": "shop", "diagnosis": "Ingress sai", "root_cause": "INGRESS",
+        "actions": [{"action_type": "apply_manifest", "content": "kind: Ingress", "description": "Sửa ingress"},
+                    {"action_type": "restart_deployment", "target": "shop", "description": "Khởi động lại"}],
+    })
+    llm = scripted_llm('{"tool": "diagnose", "args": {"app": "shop"}}')
+    result = hermes_butler.run_agent(111, "u-alice", [], "shop lỗi", llm=llm)
+    assert [a["args"]["action"]["action_type"] for a in result["approvals"]] == ["restart_deployment"]
+    assert "apply_manifest" in result["reply"]
+    with pytest.raises(hermes_tools.ToolError):
+        hermes_tools.run_tool("u-alice", "apply_fix", {"app": "shop", "action": {
+            "action_type": "apply_manifest", "content": "kind: Ingress", "description": "x"}}, include_internal=True)

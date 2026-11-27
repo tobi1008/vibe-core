@@ -181,9 +181,16 @@ def run_agent(chat_id: int, user_id: str, history: List[Dict[str, str]], message
         try:
             if tool_name == "diagnose":
                 result = hermes_tools.diagnose(user_id, args)
+                blocked = []
                 for action in result.get("actions") or []:
-                    approvals.append(create_approval(chat_id, user_id, "apply_fix", {"app": result["app"], "action": action}))
+                    if hermes_tools.fix_allowed(action):
+                        approvals.append(create_approval(chat_id, user_id, "apply_fix", {"app": result["app"], "action": action}))
+                    else:
+                        blocked.append(str((action or {}).get("action_type") if isinstance(action, dict) else action))
                 reply = format_diagnosis(result)
+                if blocked:
+                    reply += (f"\n\nHermes còn đề xuất {', '.join(blocked)} nhưng thao tác này không được phép qua Telegram "
+                              "vì có thể ảnh hưởng ngoài ứng dụng của bạn. Hãy dùng AI Debug trên web nếu cần.")
                 reply += ("\n\nHermes đề xuất các bước khắc phục bên dưới, bạn bấm Duyệt cho bước muốn thực hiện."
                           if approvals else "\n\nHermes không đề xuất thao tác tự động nào.")
                 return {"reply": reply, "approvals": approvals}

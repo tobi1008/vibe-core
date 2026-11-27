@@ -18,6 +18,7 @@ import subprocess
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+import app_scope
 import builder_core
 from builder_core import K8S_NAMESPACE, run_hermes_json
 from security import redact_secrets
@@ -274,8 +275,11 @@ def collect_workload(workload: str, with_logs: bool = True) -> Dict[str, Any]:
 
 
 def collect_events(names: List[str]) -> str:
+    """Sự kiện K3s của các workload trong `names` (so khớp đúng tên đối tượng, không theo chuỗi con
+    để app "blog" không lấy nhầm sự kiện của app "personal-blog")"""
     res = _kubectl(["get", "events", "--sort-by=.lastTimestamp"])
-    lines = [line for line in res.stdout.splitlines() if any(n in line for n in names)]
+    kept = {line for n in names for line in app_scope.filter_events(n, res.stdout).splitlines()}
+    lines = [line for line in res.stdout.splitlines() if line in kept]
     return "\n".join(lines[-20:])
 
 

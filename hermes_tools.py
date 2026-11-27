@@ -11,6 +11,7 @@ Quyền: trước khi chạy bất kỳ công cụ nào có tham số app, hàm 
 """
 
 import json
+import re
 import os
 import socket
 import ssl
@@ -22,6 +23,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
+import app_scope
 import builder_core
 import cicd_core
 import hermes_verifier
@@ -223,7 +225,7 @@ def tool_build_log(user_id: str, args: Dict[str, Any]) -> str:
 
 def tool_k8s_events(user_id: str, args: Dict[str, Any]) -> str:
     app = check_access(user_id, args.get("app"))
-    events = hermes_verifier.collect_events([app])
+    events = hermes_verifier.collect_events(sorted(app_scope.workload_names(app)))
     return _clip(f"Sự kiện K3s liên quan {app}:\n{events or 'Không có sự kiện gần đây.'}")
 
 
@@ -305,13 +307,24 @@ def tool_redeploy_app(user_id: str, args: Dict[str, Any]) -> str:
     return f"Đã bắt đầu build lại {app} từ nhánh {branch}. Hermes sẽ báo khi có kết quả kiểm tra."
 
 
+# Các kiểu sửa lỗi được phép qua Telegram. Không có apply_manifest: YAML tùy ý quá rộng để duyệt
+# qua một tin nhắn; mọi kiểu còn lại đều bị giới hạn trong tài nguyên của chính app (app_scope).
+TELEGRAM_FIX_TYPES = ("set_env", "restart_deployment", "exec_pod", "edit_file", "rebuild")
+
+
+def fix_allowed(action: Any) -> bool:
+    return isinstance(action, dict) and action.get("action_type") in TELEGRAM_FIX_TYPES
+
+
 def tool_apply_fix(user_id: str, args: Dict[str, Any]) -> str:
-    """Thực thi một hành động khắc phục do bước chẩn đoán đề xuất (set_env, apply_manifest, exec_pod, edit_file, rebuild...)"""
+    """Thực thi một hành động khắc phục do bước chẩn đoán đề xuất (set_env, exec_pod, edit_file, rebuild...)"""
     from hermes_agent_router import RemediationAction, execute_remediation_action
     app = check_access(user_id, args.get("app"))
     action = args.get("action")
     if not isinstance(action, dict):
         raise ToolError("Thiếu nội dung hành động khắc phục.")
+    if not fix_allowed(action):
+        raise ToolError(f"Không cho phép thao tác {action.get('action_type')} qua Telegram.")
     try:
         parsed = RemediationAction(**action)
     except Exception as e:
@@ -400,6 +413,17 @@ def describe_tools() -> str:
     return "\n".join(f"- {name} {t['args']}: {t['desc']}" for name, t in TOOLS.items())
 
 
+_SECRET_KEY = re.compile(r"PASS|SECRET|TOKEN|KEY|PRIVATE|CREDENTIAL", re.IGNORECASE)
+
+
+def _mask_env_value(key: str, value: Any) -> str:
+    """Hiện giá trị để người duyệt biết mình duyệt gì, nhưng che giá trị bí mật"""
+    value = str(value)
+    if _SECRET_KEY.search(key) and value:
+        return f"(ẩn, {len(value)} ký tự)"
+    return redact_secrets(value)[:200]
+
+
 def describe_action(name: str, args: Dict[str, Any]) -> str:
     """Mô tả ngắn hành động để hiện trong tin hỏi duyệt"""
     app = args.get("app", "?")
@@ -413,13 +437,18 @@ def describe_action(name: str, args: Dict[str, Any]) -> str:
         return f"Build lại {app}{comp} từ nhánh {args.get('branch') or 'main'}"
     if name == "apply_fix":
         action = args.get("action") or {}
-        detail = action.get("description") or action.get("action_type", "")
-        extra = ""
-        if action.get("action_type") == "set_env" and action.get("env_vars"):
-            extra = " [" + ", ".join(f"{k}=…" for k in action["env_vars"]) + "]"
-        elif action.get("action_type") == "exec_pod" and action.get("command"):
-            extra = f" [lệnh: {action['command'][:120]}]"
-        elif action.get("action_type") == "edit_file" and (action.get("path") or action.get("file_path")):
-            extra = f" [tệp: {action.get('path') or action.get('file_path')}]"
-        return f"{app}: {action.get('action_type', '')} – {detail}{extra}"
+        kind = action.get("action_type", "")
+        lines = [f"{app}: {kind} – {action.get('description') or ''}".rstrip(" –")]
+        if action.get("target"):
+            lines.append(f"Đối tượng: {action['target']}")
+        if kind == "set_env" and action.get("env_vars"):
+            lines.append("Biến môi trường:")
+            lines += [f"  {k}={_mask_env_value(k, v)}" for k, v in action["env_vars"].items()]
+        elif kind == "exec_pod" and action.get("command"):
+            lines.append(f"Lệnh chạy trong container của app:\n  {action['command'][:600]}")
+        elif kind == "edit_file":
+            path = action.get("path") or action.get("file_path") or "?"
+            content = action.get("content") if action.get("content") is not None else action.get("diff") or ""
+            lines.append(f"Ghi đè tệp {path} ({len(content.splitlines())} dòng); sau đó cần build lại.")
+        return "\n".join(lines)
     return f"{name} {json.dumps(args, ensure_ascii=False)[:200]}"
