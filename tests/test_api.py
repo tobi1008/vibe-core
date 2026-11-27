@@ -209,9 +209,16 @@ def test_logs_are_redacted(client, paths):
     assert "ghp_" not in logs and "***@github.com" in logs
 
 
-def test_toggle_auto_cicd(client):
+def test_toggle_auto_cicd(client, paths):
+    main.save_app_config("shop", {"repo_url": "https://github.com/u/shop.git"})
     assert client.post("/api/apps/shop/config", json={"auto_cicd": False}).status_code == 200
     assert client.get("/api/apps/shop/config").json()["data"]["auto_cicd"] is False
+
+
+def test_toggle_auto_cicd_does_not_create_ghost_app(client, paths):
+    """Bật/tắt CI/CD cho app chưa triển khai (hoặc đã xóa) không được tạo dòng cấu hình mới"""
+    assert client.post("/api/apps/ghost/config", json={"auto_cicd": False}).status_code == 404
+    assert not main.app_config_exists("ghost")
 
 
 def test_delete_schedules_purge(client, rec):
@@ -252,7 +259,7 @@ def test_webhook_requires_valid_signature(client, rec, monkeypatch):
 
 
 def test_webhook_ignored_when_auto_cicd_off(client, rec):
-    client.post("/api/apps/shop/config", json={"auto_cicd": False})
+    main.save_app_config("shop", {"auto_cicd": False})
     assert _push(client, PUSH).json()["status"] == "ignored"
     assert rec["redeploy_app"].calls == []
 

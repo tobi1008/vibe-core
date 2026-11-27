@@ -709,8 +709,19 @@ def get_pod_runtime_logs(app_name: str, component: Optional[str] = Query(None), 
 async def read_config(app_name: str):
     return {"status": "success", "data": get_app_config(app_name)}
 
+def app_config_exists(app_name: str) -> bool:
+    if not os.path.exists(CONFIG_DB_FILE):
+        return False
+    with open(CONFIG_DB_FILE, "r", encoding="utf-8") as f:
+        return app_name in json.load(f)
+
+
 @app.post("/api/apps/{app_name}/config")
 async def update_config(app_name: str, req: AppConfigUpdate):
+    # Chỉ sửa app đã triển khai: trước đây gọi với tên lạ là tự sinh một dòng cấu hình "ma"
+    # (chỉ có auto_cicd), làm app đã xóa vẫn hiện trong danh sách của Hermes
+    if not app_config_exists(app_name):
+        raise HTTPException(status_code=404, detail=f"Không có ứng dụng {app_name} trên Vibe Core.")
     save_app_config(app_name, {"auto_cicd": req.auto_cicd})
     return {"status": "success", "message": f"Đã {'bật' if req.auto_cicd else 'tắt'} Auto CI/CD cho {app_name}"}
 
