@@ -9,7 +9,8 @@ Cảnh báo chỉ gửi khi trạng thái chuyển từ tốt sang xấu (sau FA
 báo nhầm lúc đang triển khai) và gửi tin "đã hồi phục" khi trở lại bình thường.
 Mỗi ngày lúc DAILY_REPORT_HOUR giờ (GMT+7) gửi báo cáo tổng hợp.
 
-Người nhận: cảnh báo của app gửi cho chủ app và admin đã liên kết Telegram; cảnh báo VPS chỉ gửi admin.
+Người nhận: cảnh báo và báo cáo của app chỉ gửi cho chủ app (app không có chủ trên web thì gửi admin);
+cảnh báo VPS chỉ gửi admin. Admin không nhận tin về app của người dùng khác.
 Toàn bộ là mã nguồn kiểm tra theo luật, không gọi LLM; người dùng bấm "Nhờ Hermes kiểm tra" nếu muốn chẩn đoán.
 """
 
@@ -247,8 +248,11 @@ class Monitor:
     @staticmethod
     def recipients(scope: str) -> List[int]:
         try:
-            admins = user_directory.admin_ids()
-            users = set(admins) if scope == "vps" else set(admins) | set(user_directory.owners_of(scope))
+            if scope == "vps":
+                users = set(user_directory.admin_ids())
+            else:
+                # Chỉ chủ app; app không có chủ (cấu hình mồ côi) thì báo admin để dọn
+                users = set(user_directory.owners_of(scope)) or set(user_directory.admin_ids())
         except user_directory.DirectoryUnavailable:
             return []
         chats: List[int] = []
@@ -290,9 +294,17 @@ class Monitor:
             return f"⚪ {app}: không có workload nào trên K3s"
         return f"{STATUS_ICON[worst]} {app}" + (": " + "; ".join(problems) if problems else ": hoạt động bình thường")
 
+    @staticmethod
+    def report_apps(user_id: str) -> List[str]:
+        """App xuất hiện trong báo cáo của user: app của chính họ; admin thêm các app không có chủ"""
+        apps = set(user_directory.owned_apps(user_id))
+        if user_directory.is_admin(user_id):
+            apps |= {a for a in hermes_tools.all_app_names() if not user_directory.owners_of(a)}
+        return sorted(apps)
+
     def daily_report_for(self, user_id: str) -> str:
         now = datetime.now(TZ)
-        apps = hermes_tools.visible_apps(user_id)
+        apps = self.report_apps(user_id)
         lines = [f"📋 Báo cáo hằng ngày {now:%d/%m/%Y} – {len(apps)} ứng dụng"]
         lines.extend(self.app_summary(app) for app in apps)
         if user_directory.is_admin(user_id):
@@ -322,7 +334,7 @@ class Monitor:
             return 0
         snapshot = Monitor.__new__(Monitor)
         snapshot.state = self.state
-        snapshot.latest = collect_latest(hermes_tools.visible_apps(user_id))
+        snapshot.latest = collect_latest(self.report_apps(user_id))
         text = "🧪 Gửi thử theo yêu cầu từ trang quản trị\n\n" + snapshot.daily_report_for(user_id)
         for chat_id in chats:
             tg.send_message(chat_id, text)

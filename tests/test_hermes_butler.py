@@ -355,12 +355,15 @@ def test_evaluate_workload_levels():
     assert hermes_monitor.evaluate_workload(healthy)["level"] == "ok"
 
 
-def test_alert_recipients_owner_and_admin_vps_admin_only(env):
+def test_alert_recipients_owner_only_vps_admin_only(env):
     link(111, "u-alice")
     link(222, "u-bob")
     link(333, "u-admin")
-    assert hermes_monitor.Monitor.recipients("shop") == [111, 333]
+    assert hermes_monitor.Monitor.recipients("shop") == [111]
+    assert hermes_monitor.Monitor.recipients("blog") == [222]
     assert hermes_monitor.Monitor.recipients("vps") == [333]
+    # App không có chủ trên web: báo admin để dọn
+    assert hermes_monitor.Monitor.recipients("ghost") == [333]
 
 
 def test_notify_sends_diagnose_button_for_app_alerts(env):
@@ -399,7 +402,8 @@ def test_daily_report_content_per_user(env):
     alice = mon.daily_report_for("u-alice")
     assert "🔴 shop" in alice and "blog" not in alice and "ổ đĩa" not in alice
     admin = mon.daily_report_for("u-admin")
-    assert "🟢 blog" in admin and "ổ đĩa 40%" in admin
+    assert "shop" not in admin and "blog" not in admin and "ổ đĩa 40%" in admin
+    assert "0 ứng dụng" in admin
 
 
 # ─────────────────────────── API liên kết ───────────────────────────
@@ -869,7 +873,7 @@ def test_test_report_goes_only_to_requester_and_keeps_schedule(env, monkeypatch)
     assert mon.send_test_report("u-admin") == 1
     assert [m[0] for m in env["sent"]] == [111]
     assert env["sent"][0][1].startswith("🧪 Gửi thử") and "📋 Báo cáo hằng ngày" in env["sent"][0][1]
-    assert "🟢 shop" in env["sent"][0][1] and "ổ đĩa 40%" in env["sent"][0][1]
+    assert "shop" not in env["sent"][0][1] and "ổ đĩa 40%" in env["sent"][0][1]
     assert mon.state["last_daily"] == "2026-11-26" and mon.latest == {}
 
 
@@ -884,3 +888,11 @@ def test_test_report_api(env, client, monkeypatch):
     assert res.json() == {"status": "success", "sent": 1}
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN")
     assert client.post("/api/telegram/daily-report/test", json={"user_id": "u-admin"}, headers=headers).status_code == 503
+
+
+def test_admin_report_has_own_and_orphan_apps_only(env, monkeypatch):
+    monkeypatch.setattr(hermes_tools, "all_app_names", lambda: ["blog", "ghost", "shop"])
+    directory = {**DIRECTORY, "projects": DIRECTORY["projects"] + [{"app_name": "mine", "userId": "u-admin"}]}
+    monkeypatch.setattr(user_directory, "get_directory", lambda force=False: directory)
+    assert hermes_monitor.Monitor.report_apps("u-admin") == ["ghost", "mine"]
+    assert hermes_monitor.Monitor.report_apps("u-alice") == ["shop"]
