@@ -231,17 +231,83 @@ POLL_TIMEOUT = 25
 TOKEN_RECHECK_SECONDS = 5
 
 HELP_TEXT = (
-    "Mình là Hermes, quản gia của Vibe Hosting. Bạn có thể nhắn tự nhiên, ví dụ:\n"
+    "🤖 Mình là Hermes, quản gia của Vibe Hosting.\n"
+    "Bạn có thể nhắn tự nhiên bằng tiếng Việt, hoặc dùng lệnh nhanh bên dưới.\n"
+    "\n"
+    "💬 NHẮN TỰ NHIÊN, ví dụ:\n"
     "• \"app shop đang lỗi gì vậy?\"\n"
-    "• \"xem log backend của shop\"\n"
-    "• \"rollback shop về bản trước\"\n\n"
-    "Lệnh nhanh:\n"
-    "/apps – danh sách ứng dụng\n"
-    "/status <app> – trạng thái ứng dụng\n"
-    "/reset – bắt đầu hội thoại mới\n"
-    "/unlink – hủy liên kết Telegram\n\n"
-    "Mọi thao tác thay đổi hệ thống đều cần bạn bấm Duyệt. Hermes cũng tự theo dõi và báo khi ứng dụng gặp sự cố."
+    "• \"sao shop.vibe.quyenlt.com không vào được?\"\n"
+    "• \"xem log backend của shop, có lỗi database không?\"\n"
+    "• \"shop chạy chậm, kiểm tra giúp\"\n"
+    "• \"bản deploy mới của shop bị lỗi, quay lại bản trước\"\n"
+    "\n"
+    "🔎 XEM NHANH (trả lời ngay, không qua AI):\n"
+    "/apps – danh sách ứng dụng của bạn\n"
+    "/status <app> – Pod có chạy không, restart bao nhiêu lần, lỗi gì\n"
+    "/logs <app> [be|fe] – log đang chạy của ứng dụng (kèm log lần crash trước)\n"
+    "/buildlog <app> – log build/triển khai gần nhất\n"
+    "/check <app> – gọi thử HTTPS: mã trả về, tốc độ, hạn chứng chỉ\n"
+    "/events <app> – sự kiện K3s (kéo image lỗi, thiếu RAM, probe thất bại...)\n"
+    "/history <app> [be|fe] – các phiên bản đã triển khai, bản nào đang chạy\n"
+    "/report <app> – báo cáo kiểm tra sau lần triển khai gần nhất\n"
+    "\n"
+    "🩺 NHỜ HERMES XỬ LÝ:\n"
+    "/debug <app> [mô tả lỗi] – chẩn đoán nguyên nhân và đề xuất cách sửa\n"
+    "/restart <app> [be|fe] – khởi động lại ứng dụng\n"
+    "/rollback <app> [revision] – quay về bản trước (hoặc một revision trong /history)\n"
+    "/redeploy <app> [nhánh] – kéo code mới từ GitHub và build lại\n"
+    "\n"
+    "⚙️ KHÁC:\n"
+    "/reset – xóa lịch sử, bắt đầu hội thoại mới\n"
+    "/unlink – hủy liên kết Telegram này\n"
+    "/help – xem lại hướng dẫn\n"
+    "\n"
+    "🔔 TỰ ĐỘNG: Hermes kiểm tra ứng dụng mỗi vài phút và nhắn bạn khi app lỗi (Pod crash, web không vào được, "
+    "chứng chỉ sắp hết hạn), nhắn lại khi đã hồi phục, và gửi báo cáo tổng hợp mỗi sáng.\n"
+    "\n"
+    "🔒 AN TOÀN:\n"
+    "• Restart, rollback, build lại và mọi bước sửa lỗi chỉ chạy khi bạn bấm ✅ Duyệt.\n"
+    "• Hermes chỉ thấy và thao tác được ứng dụng của bạn.\n"
+    "• Kết quả thật luôn là dòng ✅/⚠️ do hệ thống gửi sau khi bạn duyệt.\n"
+    "• Hermes KHÔNG tạo, xóa ứng dụng hay đổi tên miền: việc đó làm trên web " + WEB_URL + "."
 )
+
+# Menu lệnh hiện khi gõ "/" trong Telegram (đăng ký bằng setMyCommands)
+BOT_COMMANDS = [
+    ("apps", "Danh sách ứng dụng"),
+    ("status", "Trạng thái ứng dụng: /status <app>"),
+    ("logs", "Log đang chạy: /logs <app> [be|fe]"),
+    ("check", "Kiểm tra HTTPS: /check <app>"),
+    ("debug", "Chẩn đoán lỗi: /debug <app> [mô tả]"),
+    ("restart", "Khởi động lại: /restart <app> [be|fe]"),
+    ("rollback", "Quay về bản trước: /rollback <app> [revision]"),
+    ("redeploy", "Build lại từ GitHub: /redeploy <app> [nhánh]"),
+    ("buildlog", "Log build gần nhất: /buildlog <app>"),
+    ("events", "Sự kiện K3s: /events <app>"),
+    ("history", "Các phiên bản đã triển khai: /history <app>"),
+    ("report", "Báo cáo sau triển khai: /report <app>"),
+    ("reset", "Bắt đầu hội thoại mới"),
+    ("help", "Hướng dẫn"),
+    ("unlink", "Hủy liên kết Telegram"),
+]
+
+# Lệnh xem nhanh: lệnh -> (công cụ, tên tham số thứ 2 nếu có)
+READ_COMMANDS = {
+    "/status": ("app_status", None),
+    "/logs": ("runtime_logs", "component"),
+    "/buildlog": ("build_log", None),
+    "/check": ("http_check", None),
+    "/events": ("k8s_events", None),
+    "/history": ("deploy_history", "component"),
+    "/report": ("health_report", None),
+}
+# Lệnh thay đổi hệ thống: tạo yêu cầu duyệt ngay, không qua AI
+ACTION_COMMANDS = {
+    "/restart": ("restart_app", "component"),
+    "/rollback": ("rollback_app", "revision"),
+    "/redeploy": ("redeploy_app", "branch"),
+}
+
 
 NOT_LINKED_TEXT = (
     "Telegram này chưa liên kết với tài khoản Vibe Hosting.\n"
@@ -309,12 +375,28 @@ class Butler:
             self.send(chat_id, "Đã hủy liên kết. Hermes sẽ không gửi thông báo cho Telegram này nữa.")
         elif command == "/apps":
             self.executor.submit(self._direct_tool, chat_id, user_id, "list_apps", {})
-        elif command == "/status":
+        elif command in READ_COMMANDS or command in ACTION_COMMANDS:
+            tool, extra = READ_COMMANDS.get(command) or ACTION_COMMANDS[command]
             parts = text.split()
             if len(parts) < 2:
-                self.send(chat_id, "Cú pháp: /status <tên app>")
+                usage = {"component": " [be|fe]", "revision": " [revision]", "branch": " [nhánh]"}.get(extra, "")
+                self.send(chat_id, f"Cú pháp: {command} <tên app>{usage}. Gõ /apps để xem tên app.")
+                return
+            args: Dict[str, Any] = {"app": parts[1]}
+            if extra and len(parts) > 2:
+                args[extra] = parts[2]
+            if command in ACTION_COMMANDS:
+                self.executor.submit(self._propose_action, chat_id, user_id, tool, args)
             else:
-                self.executor.submit(self._direct_tool, chat_id, user_id, "app_status", {"app": parts[1]})
+                self.executor.submit(self._direct_tool, chat_id, user_id, tool, args)
+        elif command == "/debug":
+            parts = text.split(maxsplit=2)
+            if len(parts) < 2:
+                self.send(chat_id, "Cú pháp: /debug <tên app> [mô tả lỗi]")
+                return
+            note = f" Người dùng mô tả: {parts[2]}" if len(parts) > 2 else ""
+            request = f"Chẩn đoán ứng dụng {parts[1]} bằng công cụ diagnose và đề xuất cách xử lý.{note}"
+            self.executor.submit(self.converse, chat_id, user_id, request)
         elif command:
             self.send(chat_id, "Lệnh không hỗ trợ. Gõ /help để xem hướng dẫn.")
         else:
@@ -334,6 +416,21 @@ class Butler:
             self.send(chat_id, HELP_TEXT)
         else:
             self.send(chat_id, NOT_LINKED_TEXT)
+
+    def _propose_action(self, chat_id: int, user_id: str, tool: str, args: Dict[str, Any]) -> None:
+        """Lệnh /restart, /rollback, /redeploy: kiểm tra quyền rồi gửi nút Duyệt, chưa thực thi gì"""
+        try:
+            args["app"] = hermes_tools.check_access(user_id, args.get("app"))
+            if "component" in args:
+                hermes_tools._component(args)
+            if "revision" in args and not str(args["revision"]).isdigit():
+                raise hermes_tools.ToolError("revision phải là số, xem các revision bằng /history <app>.")
+            approval = create_approval(chat_id, user_id, tool, args)
+            self.send(chat_id, "Xác nhận thao tác bên dưới:", [approval])
+        except hermes_tools.ToolError as e:
+            self.send(chat_id, f"⚠️ {e}")
+        except user_directory.DirectoryUnavailable:
+            self.send(chat_id, "⚠️ Không tra cứu được tài khoản trên Vibe Hosting, bạn thử lại sau nhé.")
 
     def _direct_tool(self, chat_id: int, user_id: str, tool: str, args: Dict[str, Any]) -> None:
         try:
@@ -429,6 +526,10 @@ class Butler:
             if token != current_token:
                 builder_core.write_log(LOG_NAME, "🤖 Hermes Butler bắt đầu nhận tin nhắn Telegram.")
                 current_token, offset = token, None
+                try:
+                    tg.set_my_commands(BOT_COMMANDS)
+                except Exception as e:
+                    builder_core.write_log(LOG_NAME, f"⚠️ Không đăng ký được menu lệnh: {e}")
             try:
                 updates = tg.get_updates(offset, poll_timeout=POLL_TIMEOUT)
                 tg.write_runtime_status(running=True)

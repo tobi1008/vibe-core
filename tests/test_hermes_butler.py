@@ -53,6 +53,7 @@ def env(tmp_path, monkeypatch, paths):
     monkeypatch.setattr(telegram_client, "send_chat_action", lambda *a, **k: None)
     monkeypatch.setattr(telegram_client, "answer_callback", lambda *a, **k: None)
     monkeypatch.setattr(telegram_client, "clear_keyboard", lambda *a, **k: None)
+    monkeypatch.setattr(telegram_client, "set_my_commands", lambda *a, **k: None)
     hermes_butler._approvals.clear()
     bot = hermes_butler.Butler()
     bot.executor = SyncExecutor()
@@ -793,3 +794,61 @@ def test_list_apps_flags_apps_without_owner_for_admin(env, monkeypatch):
     assert "- old-test (old-test.vibe.quyenlt.com) ⚠️ không có chủ trên web" in out
     assert "- shop (shop.vibe.quyenlt.com)\n" in out and "1 app không còn project" in out
     assert "không có chủ" not in hermes_tools.run_tool("u-alice", "list_apps", {})
+
+
+# ─────────────────────────── Lệnh nhanh ───────────────────────────
+
+def test_help_lists_every_menu_command():
+    for command, _ in hermes_butler.BOT_COMMANDS:
+        assert f"/{command}" in hermes_butler.HELP_TEXT
+
+
+def test_every_menu_command_is_handled(env, monkeypatch):
+    link(111, "u-alice")
+    monkeypatch.setattr(env["bot"], "converse", lambda *a: None)
+    monkeypatch.setattr(env["bot"], "_direct_tool", lambda *a: None)
+    monkeypatch.setattr(env["bot"], "_propose_action", lambda *a: None)
+    for command, _ in hermes_butler.BOT_COMMANDS:
+        if command == "unlink":
+            continue
+        env["sent"].clear()
+        env["bot"].handle_message(private_message(111, f"/{command} shop"))
+        assert not any("không hỗ trợ" in m[1] for m in env["sent"]), command
+
+
+def test_read_command_passes_component(env, monkeypatch):
+    link(111, "u-alice")
+    calls = []
+    monkeypatch.setattr(env["bot"], "_direct_tool", lambda chat, uid, tool, args: calls.append((tool, args)))
+    env["bot"].handle_message(private_message(111, "/logs shop be"))
+    env["bot"].handle_message(private_message(111, "/check shop"))
+    assert calls == [("runtime_logs", {"app": "shop", "component": "be"}), ("http_check", {"app": "shop"})]
+    env["bot"].handle_message(private_message(111, "/logs"))
+    assert "Cú pháp: /logs <tên app> [be|fe]" in env["sent"][-1][1]
+
+
+def test_action_command_asks_for_approval_without_running(env, monkeypatch):
+    link(111, "u-alice")
+    executed = []
+    monkeypatch.setitem(hermes_tools.TOOLS["restart_app"], "fn", lambda uid, args: executed.append(args) or "ok")
+    env["bot"].handle_message(private_message(111, "/restart shop"))
+    assert executed == []
+    assert env["sent"][-1][1] == "🔧 Đề xuất: Khởi động lại shop" and env["sent"][-1][2] is not None
+
+
+def test_action_command_checks_access_and_args(env):
+    link(111, "u-alice")
+    env["bot"].handle_message(private_message(111, "/restart blog"))
+    assert "không có quyền" in env["sent"][-1][1] and env["sent"][-1][2] is None
+    env["bot"].handle_message(private_message(111, "/rollback shop abc"))
+    assert "revision phải là số" in env["sent"][-1][1]
+    env["bot"].handle_message(private_message(111, "/restart shop xyz"))
+    assert "component" in env["sent"][-1][1]
+
+
+def test_debug_command_asks_hermes_to_diagnose(env, monkeypatch):
+    link(111, "u-alice")
+    asked = []
+    monkeypatch.setattr(env["bot"], "converse", lambda chat, uid, text: asked.append(text))
+    env["bot"].handle_message(private_message(111, "/debug shop trang chủ báo 502"))
+    assert "diagnose" in asked[0] and "shop" in asked[0] and "trang chủ báo 502" in asked[0]

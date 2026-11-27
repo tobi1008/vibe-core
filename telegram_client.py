@@ -159,6 +159,11 @@ def get_updates(offset: Optional[int], poll_timeout: int = 50) -> List[Dict[str,
     return _call("getUpdates", payload, timeout=poll_timeout + 10) or []
 
 
+def set_my_commands(commands: List[tuple]) -> None:
+    """Menu lệnh hiện khi người dùng gõ "/" trong chat với bot"""
+    _call("setMyCommands", {"commands": [{"command": c, "description": d[:256]} for c, d in commands]}, timeout=10)
+
+
 def get_me(token: Optional[str] = None) -> Dict[str, Any]:
     return _call("getMe", timeout=10, token=token)
 
