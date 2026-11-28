@@ -86,6 +86,7 @@
 | [cicd_core.py](cicd_core.py) | CI/CD: cập nhật mã nguồn, build image theo phiên bản, rolling update trên K3s. |
 | [file_manager_api.py](file_manager_api.py) | Router `/api/project`: duyệt, đọc, ghi file trong workspace; push lên GitHub của người dùng. |
 | [docker_janitor.py](docker_janitor.py) | Tự dọn build cache và image Docker cũ trên máy build sau mỗi pipeline. |
+| [node_image_cleanup.py](node_image_cleanup.py) | Khi xóa app, tạo Job ngắn trên mỗi node K3s để xóa image của app đó bằng crictl có sẵn của K3s. |
 | [dockerhub_cleanup.py](dockerhub_cleanup.py) | Dọn rác Docker Hub: tìm repo mồ côi và tag cũ, xem trước rồi mới xóa. |
 | [hermes_agent_router.py](hermes_agent_router.py) | Router `/api/ai-debug`: chẩn đoán lỗi bằng AI, thực thi hành động khắc phục, chat với AI. |
 | [builder.py](builder.py) | Bản prototype đầu tiên dạng script CLI, giữ lại để tham khảo quá trình phát triển; API không sử dụng. |
@@ -241,6 +242,14 @@ curl -X POST -H "X-API-Key: $VIBE_API_KEY" -H "Content-Type: application/json" \
 
 Sau mỗi pipeline (thành công hay thất bại), `docker_janitor.py` chạy nền `docker builder prune --max-used-space 5gb` (giữ build cache tối đa 5 GB để build sau vẫn nhanh) và `docker image prune -a --filter until=2h` (xóa image không container nào dùng và đã tạo quá 2 giờ; image đã nằm trên Docker Hub, ngưỡng thời gian tránh xóa image của pipeline khác đang build dở). Hai lượt dọn không chạy chồng nhau. Kết quả ghi ở log `docker-janitor`.
 
+Khi xóa app, ngoài tài nguyên K3s, image local và repo Docker Hub, Vibe Core tạo trên mỗi node K3s một Job ngắn (`node_image_cleanup.py`) xóa image đã kéo về của đúng app đó (`<app>`, `<app>-be`, `<app>-fe`, so khớp chính xác; image có tag của repository khác thì giữ lại). Job dùng crictl có sẵn của K3s và socket containerd của node, thử lại tối đa ~3 phút chờ Pod dừng hẳn, rồi tự hủy. Đặt `NODE_IMAGE_CLEANUP=0` để tắt. Trên node nên đặt ngưỡng GC của kubelet thấp hơn mặc định (85%/80%), ví dụ trong `/etc/rancher/k3s/config.yaml`:
+
+```yaml
+kubelet-arg:
+  - "image-gc-high-threshold=70"
+  - "image-gc-low-threshold=50"
+```
+
 Ngoài ra API chạy một luồng nền làm lưới an toàn: khi khởi động và mỗi 6 giờ dọn như trên; mỗi 5 phút đo ổ đĩa, vượt 80% thì dọn mạnh (chỉ giữ 1 GB build cache, tối đa 1 lần/giờ).
 
 ### File Manager và Git (prefix `/api/project`)
@@ -349,6 +358,7 @@ Tạo file `.env` trong thư mục gốc của dự án. File này đã nằm tr
 | `DOCKERHUB_GRACE_HOURS` | Không | Bỏ qua repo / tag vừa cập nhật trong số giờ này (pipeline có thể đang push). Mặc định `1`. |
 | `DOCKER_JANITOR` | Không | Đặt `0` để tắt tự dọn Docker sau mỗi lần build. |
 | `DOCKER_BUILD_CACHE_MAX` | Không | Dung lượng build cache tối đa giữ lại. Mặc định `5gb`. |
+| `NODE_IMAGE_CLEANUP` | Không | Đặt `0` để không xóa image trên node K3s khi xóa app. |
 | `DOCKER_JANITOR_INTERVAL` | Không | Chu kỳ dọn định kỳ (giờ). Mặc định `6`. |
 | `DOCKER_JANITOR_DISK_PCT` | Không | Ổ đĩa vượt mức này (%) thì dọn mạnh. Mặc định `80`. |
 | `DOCKER_BUILD_CACHE_MIN` | Không | Build cache giữ lại khi dọn mạnh. Mặc định `1gb`. |

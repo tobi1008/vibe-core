@@ -9,6 +9,7 @@ import time
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
+import node_image_cleanup
 from security import redact_secrets, safe_join
 
 load_dotenv()
@@ -897,8 +898,11 @@ def delete_app(app_name: str):
     write_log(app_name, f"[3] Đang gọi API Docker Hub để xóa kho chứa...")
     delete_dockerhub_repos(app_name, repos)
 
+    write_log(app_name, f"[4] Đang xóa image của app trên các node K3s...")
+    node_image_cleanup.cleanup_app_images(app_name, repos, DOCKER_USER, K8S_NAMESPACE, write_log)
+
     try:
-        write_log(app_name, f"[4] Đang dọn dẹp mã nguồn trên VPS...")
+        write_log(app_name, f"[5] Đang dọn dẹp mã nguồn trên VPS...")
         shutil.rmtree(f"{BASE_WORKSPACE}/{app_name}", ignore_errors=True)
         write_log(app_name, f"=== [HOÀN TẤT XÓA] {app_name} ===")
         write_log(app_name, "DELETED")
