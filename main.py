@@ -1,6 +1,7 @@
 import os
 import json
 import shutil
+import re
 import subprocess
 import threading
 from contextlib import asynccontextmanager
@@ -762,6 +763,50 @@ async def update_config(app_name: str, req: AppConfigUpdate):
         raise HTTPException(status_code=404, detail=f"Không có ứng dụng {app_name} trên Vibe Core.")
     save_app_config(app_name, {"auto_cicd": req.auto_cicd})
     return {"status": "success", "message": f"Đã {'bật' if req.auto_cicd else 'tắt'} Auto CI/CD cho {app_name}"}
+
+class UsageRequest(BaseModel):
+    apps: List[str] = []
+    include_nodes: bool = False
+
+
+@app.post("/api/usage")
+def get_usage(req: UsageRequest):
+    """Tài nguyên đang dùng của các app (CPU, RAM, database, ổ tạm) cho trang Usage.
+    Frontend chỉ gửi app của user đang đăng nhập (admin: mọi app, kèm tài nguyên node)"""
+    import usage
+    apps = []
+    for a in req.apps[:200]:
+        validate_app_name(a)
+        apps.append(a)
+    try:
+        return usage.apps_usage(apps, include_nodes=req.include_nodes)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Không đọc được số liệu từ K3s: {str(e)[:200]}")
+
+
+class DomainCheckRequest(BaseModel):
+    domains: List[str] = []
+
+
+_DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+
+
+@app.post("/api/domains/check")
+def check_domains(req: DomainCheckRequest):
+    """Gọi HTTPS tới các tên miền của user: mã trả về, thời gian phản hồi, số ngày còn lại của chứng chỉ"""
+    from concurrent.futures import ThreadPoolExecutor
+    from hermes_tools import probe_domain
+    domains = []
+    for d in req.domains[:50]:
+        d = str(d).strip().lower()
+        if not _DOMAIN_RE.match(d):
+            raise HTTPException(status_code=400, detail=f"Tên miền không hợp lệ: {d[:80]}")
+        if d not in domains:
+            domains.append(d)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda d: probe_domain(d, timeout=8), domains))
+    return {"status": "success", "results": results}
+
 
 class AppOwner(BaseModel):
     user_id: str

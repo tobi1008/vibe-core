@@ -89,6 +89,7 @@
 | [ai_sandbox.py](ai_sandbox.py) | Khóa quyền AI CLI (agy, claude): bỏ biến môi trường bí mật, tùy chọn chạy bằng user không đặc quyền `AI_CLI_USER`. |
 | [byo_ai.py](byo_ai.py) | Gọi model bằng key của user qua HTTP; model không có công cụ chạy trên máy chủ. |
 | [package_limits.py](package_limits.py) | Giới hạn tài nguyên theo gói hosting: ghi đè CPU/RAM/dung lượng DB vào mọi manifest trước khi apply, chặn luồng có database khi gói không cho phép. |
+| [usage.py](usage.py) | Đo CPU/RAM (kubelet), dung lượng database thật (`du` trong Pod) và ổ tạm của từng app cho trang Usage. |
 | [docker_janitor.py](docker_janitor.py) | Tự dọn build cache và image Docker cũ trên máy build sau mỗi pipeline. |
 | [node_image_cleanup.py](node_image_cleanup.py) | Khi xóa app, tạo Job ngắn trên mỗi node K3s để xóa image của app đó bằng crictl có sẵn của K3s. |
 | [dockerhub_cleanup.py](dockerhub_cleanup.py) | Dọn rác Docker Hub: tìm repo mồ côi và tag cũ, xem trước rồi mới xóa. |
@@ -225,6 +226,13 @@ curl -X POST http://localhost:8080/api/deploy \
 # Theo dõi tiến trình
 curl -H "X-API-Key: $VIBE_API_KEY" http://localhost:8080/api/logs/my-app
 ```
+
+### Usage và tên miền
+
+| Method | Endpoint | Mô tả |
+|---|---|---|
+| POST | `/api/usage` | `{apps: [...], include_nodes}`: CPU/RAM đang dùng và giới hạn, dung lượng database thật (du trong Pod, cache 5 phút), ổ tạm, từng Pod; admin kèm tài nguyên node |
+| POST | `/api/domains/check` | `{domains: [...]}`: gọi HTTPS từng tên miền: mã trả về, thời gian phản hồi, số ngày còn lại của chứng chỉ |
 
 ### Gói hosting (giới hạn tài nguyên)
 
