@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
 import ai_credentials
+import ai_sandbox
 import byo_ai
 import node_image_cleanup
 import package_limits
@@ -163,15 +164,7 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
                 "--model", model_name,
                 "--dangerously-skip-permissions"
             ]
-            res = subprocess.run(
-                cmd,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=custom_env,
-                stdin=subprocess.DEVNULL
-            )
+            res = ai_sandbox.run(cmd, cwd=cwd, timeout=timeout, env=custom_env)
             if res.returncode == 0 and res.stdout.strip():
                 write_log(app_name, f"✅ [Antigravity AI] Model [{model_name}] phản hồi thành công!")
                 return res.stdout.strip()
@@ -194,7 +187,7 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
             "-p", safe_prompt,
             "--dangerously-skip-permissions"
         ]
-        res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=custom_env, stdin=subprocess.DEVNULL)
+        res = ai_sandbox.run(cmd, cwd=cwd, timeout=timeout, env=custom_env)
         if res.returncode == 0 and res.stdout.strip():
             write_log(app_name, "✅ [Antigravity AI] Model mặc định phản hồi thành công!")
             return res.stdout.strip()
@@ -373,15 +366,7 @@ def run_claude_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] 
                 "-p", safe_prompt,
                 "--model", model_name
             ]
-            res = subprocess.run(
-                cmd,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=custom_env,
-                stdin=subprocess.DEVNULL
-            )
+            res = ai_sandbox.run(cmd, cwd=cwd, timeout=timeout, env=custom_env)
 
             if res.returncode == 0 and res.stdout.strip():
                 write_log(app_name, f"✅ [Claude Code AI] Model [{model_name}] phản hồi thành công!")
@@ -400,7 +385,7 @@ def run_claude_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] 
     try:
         write_log(app_name, "🤖 [Claude Code AI] Đang thử phương án gọi claude với cấu hình mặc định...")
         cmd = [claude_bin, "-p", safe_prompt]
-        res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=custom_env, stdin=subprocess.DEVNULL)
+        res = ai_sandbox.run(cmd, cwd=cwd, timeout=timeout, env=custom_env)
         if res.returncode == 0 and res.stdout.strip():
             write_log(app_name, "✅ [Claude Code AI] Cấu hình mặc định phản hồi thành công!")
             return res.stdout.strip()

@@ -58,6 +58,9 @@ QUY TẮC:
    những việc này thì nói thẳng là không làm được qua Telegram và chỉ chỗ làm trên web {web_url} (xóa app: vào trang
    ứng dụng trên dashboard). Không giả vờ đã làm.
 8. Muốn kiểm tra gì thì gọi công cụ ngay trong lượt này, không trả lời kiểu "mình sẽ kiểm tra lại".
+9. Tài nguyên (số project, CPU/RAM, database) bị giới hạn theo GÓI HOSTING của người dùng. Bạn không thể nâng tài nguyên
+   vượt gói; app thiếu RAM/CPU (OOMKilled, chậm) thì giải thích và đề nghị người dùng tối ưu app hoặc liên hệ admin nâng gói.
+   Hỏi về gói, giới hạn hay quyền của bạn thì gọi công cụ my_package.
 
 Ứng dụng của người dùng: {apps}
 """
@@ -258,6 +261,7 @@ HELP_TEXT = (
     "\n"
     "🔎 XEM NHANH (trả lời ngay, không qua AI):\n"
     "/apps – danh sách ứng dụng của bạn\n"
+    "/goi – gói hosting, giới hạn tài nguyên, AI đang dùng và quyền của Hermes\n"
     "/status <app> – Pod có chạy không, restart bao nhiêu lần, lỗi gì\n"
     "/logs <app> [be|fe] – log đang chạy của ứng dụng (kèm log lần crash trước)\n"
     "/buildlog <app> – log build/triển khai gần nhất\n"
@@ -282,7 +286,8 @@ HELP_TEXT = (
     "\n"
     "🔒 AN TOÀN:\n"
     "• Restart, rollback, build lại và mọi bước sửa lỗi chỉ chạy khi bạn bấm ✅ Duyệt.\n"
-    "• Hermes chỉ thấy và thao tác được ứng dụng của bạn.\n"
+    "• Hermes chỉ thấy và thao tác được ứng dụng của bạn, trong giới hạn gói hosting (xem /goi).\n"
+    "• Hermes không chạy lệnh lên máy chủ hay cụm K3s dùng chung.\n"
     "• Kết quả thật luôn là dòng ✅/⚠️ do hệ thống gửi sau khi bạn duyệt.\n"
     "• Hermes KHÔNG tạo, xóa ứng dụng hay đổi tên miền: việc đó làm trên web " + WEB_URL + "."
 )
@@ -290,6 +295,7 @@ HELP_TEXT = (
 # Menu lệnh hiện khi gõ "/" trong Telegram (đăng ký bằng setMyCommands)
 BOT_COMMANDS = [
     ("apps", "Danh sách ứng dụng"),
+    ("goi", "Gói hosting, giới hạn và quyền của Hermes"),
     ("status", "Trạng thái ứng dụng: /status <app>"),
     ("logs", "Log đang chạy: /logs <app> [be|fe]"),
     ("check", "Kiểm tra HTTPS: /check <app>"),
@@ -390,6 +396,8 @@ class Butler:
             self.send(chat_id, "Đã hủy liên kết. Hermes sẽ không gửi thông báo cho Telegram này nữa.")
         elif command == "/apps":
             self.executor.submit(self._direct_tool, chat_id, user_id, "list_apps", {})
+        elif command in ("/goi", "/package", "/quyen"):
+            self.executor.submit(self._direct_tool, chat_id, user_id, "my_package", {})
         elif command in READ_COMMANDS or command in ACTION_COMMANDS:
             tool, extra = READ_COMMANDS.get(command) or ACTION_COMMANDS[command]
             parts = text.split()

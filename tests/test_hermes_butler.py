@@ -896,3 +896,11 @@ def test_admin_report_has_own_and_orphan_apps_only(env, monkeypatch):
     monkeypatch.setattr(user_directory, "get_directory", lambda force=False: directory)
     assert hermes_monitor.Monitor.report_apps("u-admin") == ["ghost", "mine"]
     assert hermes_monitor.Monitor.report_apps("u-alice") == ["shop"]
+
+
+def test_goi_command_replies_with_package_and_permissions(env):
+    link(111, "u-alice")
+    env["bot"].handle_message(private_message(111, "/goi"))
+    text = env["sent"][-1][1]
+    assert "📦 Gói hosting" in text and "KHÔNG được làm" in text and "ứng dụng của người dùng khác" in text
+    assert "/goi" in hermes_butler.HELP_TEXT and ("goi", "Gói hosting, giới hạn và quyền của Hermes") in hermes_butler.BOT_COMMANDS

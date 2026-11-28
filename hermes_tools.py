@@ -363,6 +363,55 @@ def diagnose(user_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+# ─────────────────────────── Gói hosting và quyền ───────────────────────────
+
+PERMISSIONS_TEXT = (
+    "✅ Hermes ĐƯỢC làm (chỉ với ứng dụng của bạn):\n"
+    "• Xem trạng thái, log, sự kiện K3s, lịch sử phiên bản, kiểm tra HTTPS\n"
+    "• Chẩn đoán lỗi và đề xuất cách sửa\n"
+    "• Restart, rollback, build lại, sửa biến môi trường / file cấu hình: chỉ sau khi bạn bấm ✅ Duyệt\n"
+    "\n"
+    "⛔ Hermes KHÔNG được làm:\n"
+    "• Xem hay thao tác ứng dụng của người dùng khác\n"
+    "• Tạo, xóa ứng dụng, đổi tên miền (làm trên web)\n"
+    "• Nâng CPU/RAM/dung lượng vượt gói hosting\n"
+    "• Chạy lệnh lên máy chủ, cụm K3s hay hệ thống dùng chung"
+)
+
+
+def package_text(user_id: str) -> str:
+    """Gói hosting, mức đã dùng, AI đang dùng và phạm vi quyền của Hermes với user"""
+    user = user_directory.get_user(user_id) or {}
+    pkg = user.get("package") or {}
+    owned = len(user_directory.owned_apps(user_id))
+    lines = [f"📦 Gói hosting: {pkg.get('name') or 'chưa xác định'}"]
+    if pkg.get("description"):
+        lines.append(pkg["description"])
+    if pkg.get("unlimited") or user.get("role") == "admin":
+        lines.append("• Tài khoản admin: không giới hạn tài nguyên")
+    elif pkg:
+        lines.append(f"• Project: {owned}/{pkg.get('maxProjects')}")
+        lines.append(f"• CPU mỗi container: {pkg.get('cpu')}")
+        lines.append(f"• RAM mỗi container: {pkg.get('memory')}")
+        lines.append(f"• Database: {('có, ' + str(pkg.get('dbStorage'))) if pkg.get('allowDatabase') else 'không có trong gói'}")
+    else:
+        lines.append(f"• Project: {owned} (chưa tải được giới hạn của gói, cập nhật web để xem)")
+    engine = ai_credentials.default_engine(user_id)
+    if engine:
+        cred = next((c for c in ai_credentials.list_for(user_id) if c["engine"] == engine), None)
+        ai_line = f"key riêng của bạn – {cred['provider_name']} {cred['model']}" if cred else "key riêng của bạn"
+    else:
+        ai_line = "model có sẵn của hệ thống (gắn key riêng ở trang hồ sơ trên web)"
+    lines.append(f"🤖 AI của Hermes: {ai_line}")
+    lines.append("")
+    lines.append(PERMISSIONS_TEXT)
+    return "\n".join(lines)
+
+
+def tool_my_package(user_id: str, args: Dict[str, Any]) -> str:
+    return package_text(user_id)
+
+
 # ─────────────────────────── Bảng đăng ký công cụ ───────────────────────────
 
 Tool = Dict[str, Any]
@@ -370,6 +419,8 @@ Tool = Dict[str, Any]
 TOOLS: Dict[str, Tool] = {
     "list_apps": {"fn": tool_list_apps, "mutating": False, "args": "{}",
                   "desc": "Liệt kê các ứng dụng người dùng được quản lý."},
+    "my_package": {"fn": tool_my_package, "mutating": False, "args": "{}",
+                   "desc": "Gói hosting của người dùng (số project, CPU/RAM, database), AI đang dùng và việc Hermes được/không được làm."},
     "app_status": {"fn": tool_app_status, "mutating": False, "args": '{"app": "tên app"}',
                    "desc": "Trạng thái Deployment/Pod trên K3s: Ready, restart, lý do lỗi."},
     "runtime_logs": {"fn": tool_runtime_logs, "mutating": False,

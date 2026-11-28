@@ -86,6 +86,7 @@
 | [cicd_core.py](cicd_core.py) | CI/CD: cập nhật mã nguồn, build image theo phiên bản, rolling update trên K3s. |
 | [file_manager_api.py](file_manager_api.py) | Router `/api/project`: duyệt, đọc, ghi file trong workspace; push lên GitHub của người dùng. |
 | [ai_credentials.py](ai_credentials.py), [ai_credentials_api.py](ai_credentials_api.py) | Key AI riêng của user (OpenAI, Anthropic, Gemini, OpenAI-compatible): lưu mã hóa, chỉ dùng được cho app của chính chủ key. |
+| [ai_sandbox.py](ai_sandbox.py) | Khóa quyền AI CLI (agy, claude): bỏ biến môi trường bí mật, tùy chọn chạy bằng user không đặc quyền `AI_CLI_USER`. |
 | [byo_ai.py](byo_ai.py) | Gọi model bằng key của user qua HTTP; model không có công cụ chạy trên máy chủ. |
 | [package_limits.py](package_limits.py) | Giới hạn tài nguyên theo gói hosting: ghi đè CPU/RAM/dung lượng DB vào mọi manifest trước khi apply, chặn luồng có database khi gói không cho phép. |
 | [docker_janitor.py](docker_janitor.py) | Tự dọn build cache và image Docker cũ trên máy build sau mỗi pipeline. |
@@ -245,6 +246,12 @@ Trước mỗi `kubectl apply -f` (trong `builder_core.run_cmd`), limits/request
 
 Key lưu ở `/opt/vibe-hosting/ai_credentials.json` (mode 600), mã hóa Fernet bằng `AI_KEYS_SECRET` (không đặt thì dẫn xuất từ `VIBE_API_KEY`; đổi khóa thì user phải nhập lại key). Chọn engine `byo:<id>` khi triển khai hay AI debug: Vibe Core chỉ chấp nhận nếu key thuộc chủ app đã đăng ký (không nhận user_id từ trình duyệt), CI/CD dùng lại đúng key đó. Hermes trên Telegram và nút chẩn đoán dùng key mặc định của user nếu có, không thì dùng model của hệ thống; Hermes Verifier luôn dùng model hệ thống. Model gọi qua key riêng chỉ nhận prompt và trả văn bản, không chạy được lệnh trên máy chủ.
 
+### Khóa quyền AI agent trên hệ thống chung
+
+- **AI CLI** (Antigravity, Claude Code) là agent có công cụ, chạy trong thư mục mã nguồn của user. `ai_sandbox.py` bỏ mọi biến môi trường bí mật của Vibe Core (VIBE_API_KEY, DOCKER_PASSWORD, token, secret...) và trỏ `KUBECONFIG` về `/dev/null`. Đặt `AI_CLI_USER=vibe-ai` để chạy CLI bằng user không đặc quyền qua `sudo -n -u vibe-ai` (không đọc được kubeconfig, `.env`, workspace của app khác; chỉ được cấp quyền đọc mã nguồn của đúng app bằng `setfacl`). Chuẩn bị trên máy chủ: `useradd -m vibe-ai`, đăng nhập `agy`/`claude` bằng user này, thêm `/etc/sudoers.d/vibe-ai` với `root ALL=(vibe-ai) NOPASSWD: ALL`.
+- **Key AI riêng** chỉ là lời gọi HTTP, model không có công cụ chạy trên máy chủ.
+- **Hermes** (web và Telegram): mọi thao tác giới hạn trong tài nguyên của đúng app (`app_scope.py`) và trong gói hosting (`package_limits.py`). Telegram có `/goi` cho người dùng xem gói, giới hạn, AI đang dùng và danh sách việc Hermes được/không được làm.
+
 ### Dọn rác Docker Hub
 
 | Method | Endpoint | Mô tả |
@@ -380,6 +387,7 @@ Tạo file `.env` trong thư mục gốc của dự án. File này đã nằm tr
 | `DOCKERHUB_KEEP_TAGS` | Không | Số tag mới nhất luôn giữ lại trong mỗi repo khi dọn rác. Mặc định `3`. |
 | `DOCKERHUB_GRACE_HOURS` | Không | Bỏ qua repo / tag vừa cập nhật trong số giờ này (pipeline có thể đang push). Mặc định `1`. |
 | `AI_KEYS_SECRET` | Khuyến nghị | Khóa mã hóa API key AI của user. Bỏ trống thì dẫn xuất từ `VIBE_API_KEY`. |
+| `AI_CLI_USER` | Khuyến nghị | User hệ thống không đặc quyền để chạy AI CLI (vd `vibe-ai`). Bỏ trống thì CLI chạy bằng user của API (chỉ lọc biến môi trường). |
 | `DOCKER_JANITOR` | Không | Đặt `0` để tắt tự dọn Docker sau mỗi lần build. |
 | `DOCKER_BUILD_CACHE_MAX` | Không | Dung lượng build cache tối đa giữ lại. Mặc định `5gb`. |
 | `NODE_IMAGE_CLEANUP` | Không | Đặt `0` để không xóa image trên node K3s khi xóa app. |
