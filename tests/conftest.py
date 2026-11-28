@@ -36,6 +36,7 @@ try:
     import hermes_agent_router  # noqa: E402
     import hermes_verifier  # noqa: E402
     import main  # noqa: E402
+    import package_limits  # noqa: E402
 finally:
     os.makedirs = _real_makedirs
 
@@ -51,11 +52,13 @@ def paths(tmp_path, monkeypatch):
         d.mkdir()
     config_file = tmp_path / "apps_config.json"
 
-    for mod in (builder_core, main, cicd_core, file_manager_api, hermes_agent_router, archive_builder_core):
+    for mod in (builder_core, main, cicd_core, file_manager_api, hermes_agent_router, archive_builder_core, package_limits):
         if hasattr(mod, "BASE_WORKSPACE"):
             monkeypatch.setattr(mod, "BASE_WORKSPACE", str(ws))
         if hasattr(mod, "LOGS_DIR"):
             monkeypatch.setattr(mod, "LOGS_DIR", str(logs))
+        if hasattr(mod, "RESOURCES_FILE"):
+            monkeypatch.setattr(mod, "RESOURCES_FILE", str(tmp_path / "app_resources.json"))
         if hasattr(mod, "CONFIG_DB_FILE"):
             monkeypatch.setattr(mod, "CONFIG_DB_FILE", str(config_file))
 
@@ -123,6 +126,7 @@ def no_real_docker_login(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path / "docker-config"))
     monkeypatch.setattr(builder_core, "DOCKER_PASSWORD", None)
     monkeypatch.setenv("DOCKER_JANITOR", "0")  # không chạy docker prune thật
+    monkeypatch.setenv("NAMESPACE_LIMIT_RANGE", "0")  # không apply LimitRange thật
     monkeypatch.setenv("NODE_IMAGE_CLEANUP", "0")  # không tạo Job xóa image trên node thật
 
 

@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
 import node_image_cleanup
+import package_limits
 from security import redact_secrets, safe_join
 
 load_dotenv()
@@ -499,6 +500,10 @@ def write_log(app_name, message):
 
 def run_cmd(cmd, app_name, cwd=None):
     try:
+        # Mọi manifest (AI sinh hoặc viết sẵn) đều được ghi đè giới hạn của gói hosting trước khi apply
+        target = package_limits.apply_target(cmd, cwd)
+        if target and package_limits.enforce_file(app_name, target):
+            write_log(app_name, f"📦 [GÓI HOSTING] Áp giới hạn tài nguyên của gói vào {os.path.basename(target)}")
         write_log(app_name, f"> Chạy lệnh: {' '.join(cmd)}")
         result = subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, text=True)
         if result.stdout:

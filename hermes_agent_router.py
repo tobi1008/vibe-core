@@ -17,6 +17,7 @@ from builder_core import (
     write_log,
 )
 import app_scope
+import package_limits
 from cicd_core import redeploy_app
 from security import validate_app_name, is_inside_dir, touches_git_dir, redact_secrets
 
@@ -526,6 +527,11 @@ def _execute_remediation_action(app_name: str, action: RemediationAction) -> Dic
         # Chỉ cho phép sửa tài nguyên của chính app, cấm mọi thứ chạm tới máy chủ hay app khác
         from hermes_tools import app_domains
         app_scope.validate_manifest(app_name, manifest_yaml, K8S_NAMESPACE, app_domains(app_scope.base_app_name(app_name)))
+        # Không được tự nới tài nguyên vượt gói hosting; giới hạn của gói luôn được ghi đè vào manifest
+        over = package_limits.exceeds_limits(app_name, manifest_yaml)
+        if over:
+            raise app_scope.ScopeError(over)
+        manifest_yaml = package_limits.enforce_text(app_name, manifest_yaml)
 
         try:
             res = subprocess.run(

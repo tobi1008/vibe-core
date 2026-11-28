@@ -85,6 +85,7 @@
 | [archive_builder_core.py](archive_builder_core.py) | Triển khai từ file nén; giải nén an toàn (chống Zip Slip / path traversal). |
 | [cicd_core.py](cicd_core.py) | CI/CD: cập nhật mã nguồn, build image theo phiên bản, rolling update trên K3s. |
 | [file_manager_api.py](file_manager_api.py) | Router `/api/project`: duyệt, đọc, ghi file trong workspace; push lên GitHub của người dùng. |
+| [package_limits.py](package_limits.py) | Giới hạn tài nguyên theo gói hosting: ghi đè CPU/RAM/dung lượng DB vào mọi manifest trước khi apply, chặn luồng có database khi gói không cho phép. |
 | [docker_janitor.py](docker_janitor.py) | Tự dọn build cache và image Docker cũ trên máy build sau mỗi pipeline. |
 | [node_image_cleanup.py](node_image_cleanup.py) | Khi xóa app, tạo Job ngắn trên mỗi node K3s để xóa image của app đó bằng crictl có sẵn của K3s. |
 | [dockerhub_cleanup.py](dockerhub_cleanup.py) | Dọn rác Docker Hub: tìm repo mồ côi và tag cũ, xem trước rồi mới xóa. |
@@ -221,6 +222,14 @@ curl -X POST http://localhost:8080/api/deploy \
 # Theo dõi tiến trình
 curl -H "X-API-Key: $VIBE_API_KEY" http://localhost:8080/api/logs/my-app
 ```
+
+### Gói hosting (giới hạn tài nguyên)
+
+| Method | Endpoint | Mô tả |
+|---|---|---|
+| POST | `/api/apps/{app}/resources` | Frontend gửi giới hạn của gói trước mỗi lần triển khai và khi admin đổi gói: `{"cpu": "500m", "memory": "512Mi", "db_storage": "1Gi", "allow_database": true}`. Lưu ở `app_resources.json` và `kubectl set resources` ngay cho workload đang chạy |
+
+Trước mỗi `kubectl apply -f` (trong `builder_core.run_cmd`), limits/requests của mọi container trong Deployment/StatefulSet bị ghi đè theo gói (requests = 1/4 limits), PVC mới nhận dung lượng của gói (PVC đã có giữ nguyên vì local-path không đổi được kích thước). Manifest do AI sinh hay Hermes đề xuất đều không vượt được gói; Hermes đề xuất manifest vượt gói thì bị từ chối. Gói không có database thì các luồng deploy-with-db, archive-with-db, fullstack, monorepo có DB và CMS trả 403. Khi API khởi động, `LimitRange` `vibe-default-limits` được apply cho namespace làm lưới an toàn (`NAMESPACE_DEFAULT_CPU`/`NAMESPACE_DEFAULT_MEMORY`, mặc định `1000m`/`1Gi`; `NAMESPACE_LIMIT_RANGE=0` để tắt).
 
 ### Dọn rác Docker Hub
 

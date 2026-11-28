@@ -17,6 +17,8 @@ from monorepo_builder_core import deploy_monorepo_app
 from hermes_verifier import verify_deployment, discover_workloads, load_report, revision_history
 import builder_core
 import docker_janitor
+import package_limits
+import app_scope
 import dockerhub_cleanup
 from fastapi.responses import JSONResponse
 from security import require_api_key, require_upload_scope, UPLOAD_TOKEN_PATHS, MAX_UPLOAD_BYTES, validate_app_name, validate_repo_url, verify_github_signature, redact_secrets, safe_upload_filename
@@ -59,6 +61,9 @@ async def lifespan(_app: FastAPI):
         telegram_api.start_background_services()
     # Dọn Docker định kỳ và khi ổ đĩa sắp đầy (máy này build image cho mọi app)
     docker_janitor.start_background(_janitor_stop, builder_core.write_log)
+    # Lưới an toàn: container không khai báo limits vẫn bị giới hạn (chạy nền, không chặn khởi động)
+    if os.getenv("NAMESPACE_LIMIT_RANGE", "1") != "0":
+        threading.Thread(target=package_limits.ensure_limit_range, args=(K8S_NAMESPACE,), daemon=True).start()
     yield
     _janitor_stop.set()
     if telegram_api:
@@ -299,6 +304,7 @@ async def trigger_deploy_open_source(req: OpenSourceDeployRequest, background_ta
     Không yêu cầu người dùng nạp file backup SQL.
     """
     validate_app_name(req.app_name)
+    require_database_allowed(req.app_name, req.db_type or "mysql")
     target_repo = (req.repo_url or "").strip()
     cms_type = (req.cms_type or "").strip().lower()
 
@@ -358,6 +364,7 @@ async def trigger_deploy_db(
     ai_provider: Optional[str] = Form("agy")
 ):
     validate_app_name(app_name)
+    require_database_allowed(app_name, db_type)
     validate_repo_url(repo_url)
     final_url = prepare_repo_url(repo_url, github_token)
     owner = resolve_github_owner_from_token(github_token)
@@ -439,6 +446,7 @@ async def trigger_deploy_archive_with_db(
     ai_provider: Optional[str] = Form("agy")
 ):
     validate_app_name(app_name)
+    require_database_allowed(app_name, db_type)
     require_upload_scope(request, app_name)
     safe_filename = safe_upload_filename(archive_file.filename)
     saved_archive_path = f"{UPLOAD_DIR}/{app_name}_{safe_filename}"
@@ -503,6 +511,7 @@ async def trigger_deploy_fullstack(
     ai_provider: Optional[str] = Form("agy")
 ):
     validate_app_name(app_name)
+    require_database_allowed(app_name, db_type)
     validate_repo_url(be_repo_url)
     validate_repo_url(fe_repo_url)
     final_be_url = prepare_repo_url(be_repo_url, github_token)
@@ -552,6 +561,7 @@ async def trigger_deploy_fullstack(
 @app.post("/api/deploy-monorepo")
 async def trigger_deploy_monorepo(req: MonorepoDeployRequest, background_tasks: BackgroundTasks):
     validate_app_name(req.app_name)
+    require_database_allowed(req.app_name, req.db_type)
     validate_repo_url(req.repo_url)
     final_url = prepare_repo_url(req.repo_url, req.github_token)
     owner = resolve_github_owner_from_token(req.github_token)
@@ -654,6 +664,12 @@ def purge_app_workspace_and_configs(app_name: str):
     except Exception:
         pass
 
+    # Giới hạn tài nguyên theo gói hosting của app
+    try:
+        package_limits.forget(app_name)
+    except Exception:
+        pass
+
     # 4. Xóa log build cũ để chuẩn bị môi trường sạch
     try:
         for log_path in (f"{LOG_DIR}/{app_name}.log", f"{LOG_DIR}/{app_name}.health.json", f"{LOG_DIR}/{app_name}.revisions.json"):
@@ -733,6 +749,32 @@ async def update_config(app_name: str, req: AppConfigUpdate):
         raise HTTPException(status_code=404, detail=f"Không có ứng dụng {app_name} trên Vibe Core.")
     save_app_config(app_name, {"auto_cicd": req.auto_cicd})
     return {"status": "success", "message": f"Đã {'bật' if req.auto_cicd else 'tắt'} Auto CI/CD cho {app_name}"}
+
+class AppResources(BaseModel):
+    cpu: str
+    memory: str
+    db_storage: str = "1Gi"
+    allow_database: bool = True
+
+
+@app.post("/api/apps/{app_name}/resources")
+async def update_resources(app_name: str, req: AppResources):
+    """Frontend gửi giới hạn của gói hosting trước mỗi lần triển khai và khi admin đổi gói của user.
+    Lưu lại để mọi lần apply manifest sau đó đều bị ghi đè đúng giới hạn, và áp ngay cho app đang chạy"""
+    validate_app_name(app_name)
+    try:
+        saved = package_limits.save_resources(app_name, req.model_dump())
+    except package_limits.LimitsError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    updated = package_limits.apply_to_running(app_name, K8S_NAMESPACE, sorted(app_scope.workload_names(app_name)))
+    return {"status": "success", "resources": saved, "updated": updated}
+
+
+def require_database_allowed(app_name: str, db_type: Optional[str]) -> None:
+    """Gói hosting không có database thì từ chối mọi luồng tạo database (kể cả upload file nén từ trình duyệt)"""
+    if package_limits.wants_database(db_type) and not package_limits.database_allowed(app_name):
+        raise HTTPException(status_code=403, detail="Gói hosting của bạn không bao gồm database.")
+
 
 @app.post("/api/apps/{app_name}/redeploy")
 async def manual_redeploy(
