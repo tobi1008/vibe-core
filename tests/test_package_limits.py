@@ -155,3 +155,13 @@ def test_purge_forgets_resources(paths, no_kubectl):
 def test_limit_range_manifest():
     m = pl.limit_range_manifest("default")
     assert m["kind"] == "LimitRange" and m["spec"]["limits"][0]["default"]["memory"] == pl.DEFAULT_LIMIT_MEMORY
+
+
+def test_app_allocation_split_across_workloads(paths, no_kubectl):
+    pl.save_resources("shop", {"cpu": "900m", "memory": "768Mi", "db_storage": "2Gi", "parts": 3})
+    assert pl.per_container(pl.get_resources("shop")) == {"cpu": "300m", "memory": "256Mi"}
+    docs = list(yaml.safe_load_all(pl.enforce_text("shop", AI_MANIFEST)))
+    assert docs[0]["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"] == {"cpu": "300m", "memory": "256Mi"}
+    assert "vượt gói" in pl.exceeds_limits("shop", AI_MANIFEST.replace('cpu: "4", memory: 8Gi', "cpu: 400m, memory: 128Mi"))
+    with pytest.raises(pl.LimitsError):
+        pl.normalize({"cpu": "500m", "memory": "512Mi", "parts": 0})

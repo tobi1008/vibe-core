@@ -834,10 +834,11 @@ def require_ai_engine_owner(app_name: str, ai_engine: str) -> None:
 
 
 class AppResources(BaseModel):
-    cpu: str
-    memory: str
+    cpu: str          # tổng CPU đã phân bổ cho app
+    memory: str       # tổng RAM đã phân bổ cho app
     db_storage: str = "1Gi"
     allow_database: bool = True
+    parts: int = 1    # số workload của app (web/backend/frontend/database), chia đều CPU/RAM
 
 
 @app.post("/api/apps/{app_name}/resources")

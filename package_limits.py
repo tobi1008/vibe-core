@@ -1,8 +1,9 @@
 """
 Giới hạn tài nguyên theo gói hosting (package) của chủ app.
 
-Gói do admin cấu hình trên web (frontend). Trước mỗi lần triển khai, frontend gửi giới hạn của gói
-cho Vibe Core qua POST /api/apps/{app}/resources (xác thực bằng VIBE_API_KEY), Vibe Core lưu vào
+Gói do admin cấu hình trên web (frontend) là TỔNG tài nguyên của user; khi tạo project user chọn CPU/RAM/dung
+lượng database cho app trong phần còn lại của gói. Trước mỗi lần triển khai (và khi đổi tài nguyên), frontend gửi
+phần đã phân bổ cho app cùng số workload (parts) để chia đều cho từng container, qua POST /api/apps/{app}/resources (xác thực bằng VIBE_API_KEY), Vibe Core lưu vào
 app_resources.json (file riêng, để app chưa triển khai không thành "app ma" trong apps_config.json):
     {"cpu": "500m", "memory": "512Mi", "db_storage": "1Gi", "allow_database": true}
 Không dùng giới hạn trình duyệt gửi kèm khi upload file nén, vì trình duyệt gọi thẳng Vibe Core.
@@ -89,8 +90,22 @@ def normalize(resources: Dict[str, Any]) -> Dict[str, Any]:
         raise LimitsError("RAM phải trong khoảng 32Mi – 256Gi.")
     if not 1024 <= memory_mi(db_storage) <= 1024 * 1024:
         raise LimitsError("Dung lượng database phải trong khoảng 1Gi – 1024Gi.")
+    try:
+        parts = int(resources.get("parts", 1))
+    except (TypeError, ValueError):
+        raise LimitsError("parts phải là số nguyên.")
+    if not 1 <= parts <= 8:
+        raise LimitsError("parts phải trong khoảng 1 – 8.")
     return {"cpu": cpu, "memory": memory, "db_storage": db_storage,
-            "allow_database": bool(resources.get("allow_database", True))}
+            "allow_database": bool(resources.get("allow_database", True)), "parts": parts}
+
+
+def per_container(limits: Dict[str, Any]) -> Dict[str, str]:
+    """CPU/RAM đã phân bổ cho CẢ app (frontend gửi), chia đều cho các workload của app (parts: web, backend,
+    frontend, database...). Tối thiểu 10m / 32Mi mỗi container"""
+    parts = max(1, int(limits.get("parts", 1) or 1))
+    return {"cpu": f"{max(10, cpu_millis(limits['cpu']) // parts)}m",
+            "memory": f"{max(32, memory_mi(limits['memory']) // parts)}Mi"}
 
 
 def requests_for(limits: Dict[str, Any]) -> Dict[str, str]:
@@ -156,7 +171,8 @@ def _existing_pvc_size(name: str) -> Optional[str]:
     return res.stdout.strip() or None
 
 
-def _apply_container_limits(containers: List[Dict[str, Any]], limits: Dict[str, Any]) -> None:
+def _apply_container_limits(containers: List[Dict[str, Any]], app_limits: Dict[str, Any]) -> None:
+    limits = per_container(app_limits)
     req = requests_for(limits)
     for c in containers or []:
         if not isinstance(c, dict):
@@ -229,6 +245,7 @@ def exceeds_limits(app_name: str, manifest_yaml: str) -> Optional[str]:
     limits = get_resources(app_name)
     if not limits:
         return None
+    limits = per_container(limits)
     max_cpu, max_mem = cpu_millis(limits["cpu"]), memory_mi(limits["memory"])
     for doc in yaml.safe_load_all(manifest_yaml):
         if not isinstance(doc, dict) or doc.get("kind") not in ("Deployment", "StatefulSet"):
@@ -248,9 +265,10 @@ def exceeds_limits(app_name: str, manifest_yaml: str) -> Optional[str]:
 
 def apply_to_running(app_name: str, namespace: str, workloads: List[str]) -> List[str]:
     """kubectl set resources cho các workload đang tồn tại của app; trả về danh sách đã cập nhật"""
-    limits = get_resources(app_name)
-    if not limits:
+    app_limits = get_resources(app_name)
+    if not app_limits:
         return []
+    limits = per_container(app_limits)
     req = requests_for(limits)
     updated = []
     for kind in ("deployment", "statefulset"):

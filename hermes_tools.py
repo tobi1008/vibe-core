@@ -374,7 +374,7 @@ PERMISSIONS_TEXT = (
     "⛔ Hermes KHÔNG được làm:\n"
     "• Xem hay thao tác ứng dụng của người dùng khác\n"
     "• Tạo, xóa ứng dụng, đổi tên miền (làm trên web)\n"
-    "• Nâng CPU/RAM/dung lượng vượt gói hosting\n"
+    "• Nâng CPU/RAM/dung lượng vượt mức đã phân bổ cho app\n"
     "• Chạy lệnh lên máy chủ, cụm K3s hay hệ thống dùng chung"
 )
 
@@ -391,9 +391,10 @@ def package_text(user_id: str) -> str:
         lines.append("• Tài khoản admin: không giới hạn tài nguyên")
     elif pkg:
         lines.append(f"• Project: {owned}/{pkg.get('maxProjects')}")
-        lines.append(f"• CPU mỗi container: {pkg.get('cpu')}")
-        lines.append(f"• RAM mỗi container: {pkg.get('memory')}")
-        lines.append(f"• Database: {('có, ' + str(pkg.get('dbStorage'))) if pkg.get('allowDatabase') else 'không có trong gói'}")
+        lines.append(f"• Tổng CPU của gói: {pkg.get('cpu')}")
+        lines.append(f"• Tổng RAM của gói: {pkg.get('memory')}")
+        lines.append(f"• Database: {('tổng ' + str(pkg.get('dbStorage'))) if pkg.get('allowDatabase') else 'không có trong gói'}")
+        lines.append("  (chia cho các project khi tạo; đổi mức của từng project ở tab Cài đặt trên web)")
     else:
         lines.append(f"• Project: {owned} (chưa tải được giới hạn của gói, cập nhật web để xem)")
     engine = ai_credentials.default_engine(user_id)
