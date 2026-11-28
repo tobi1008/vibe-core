@@ -52,7 +52,7 @@ def test_agy_first_model_success(monkeypatch, logs):
     monkeypatch.setattr(builder_core, "get_agy_bin", lambda: "agy")
     calls = fake_subprocess(monkeypatch, [Res(0, "  xin chao  ")])
     assert builder_core.run_agy_prompt("hi", app_name="a") == "xin chao"
-    assert calls[0][:4] == ["agy", "-p", "hi", "--model"]
+    assert calls[0][0:2] == ["agy", "-p"] and calls[0][2].endswith("hi") and calls[0][3] == "--model"
     assert calls[0][4] == builder_core.AGY_MODELS[0]
 
 
@@ -140,7 +140,7 @@ def test_claude_first_model_success(monkeypatch, logs):
     monkeypatch.setattr(builder_core, "get_claude_bin", lambda: "claude")
     calls = fake_subprocess(monkeypatch, [Res(0, "ok")])
     assert builder_core.run_claude_prompt("hi") == "ok"
-    assert calls[0][:3] == ["claude", "-p", "hi"]
+    assert calls[0][0:2] == ["claude", "-p"] and calls[0][2].endswith("hi")
 
 
 def test_claude_falls_back_then_default(monkeypatch, logs):
@@ -150,7 +150,7 @@ def test_claude_falls_back_then_default(monkeypatch, logs):
     outcomes = (errors * n)[:n] + [Res(0, "mac dinh")]
     calls = fake_subprocess(monkeypatch, outcomes)
     assert builder_core.run_claude_prompt("x" * 80000) == "mac dinh"
-    assert calls[-1] == ["claude", "-p", calls[-1][2]]
+    assert calls[-1] == ["claude", "-p", calls[-1][2], "--tools", ""]
     assert len(calls[-1][2]) < 71000
 
 

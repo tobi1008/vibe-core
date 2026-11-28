@@ -151,7 +151,7 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
     custom_env["PATH"] = ":".join(extra_dirs) + ":" + custom_env.get("PATH", "")
 
     # Bảo vệ chống lỗi Linux E2BIG / [Errno 7] Argument list too long
-    safe_prompt = prompt
+    safe_prompt = ai_sandbox.safe_prompt(prompt)  # nhắc model: không có công cụ
     if len(safe_prompt) > 70000:
         safe_prompt = safe_prompt[:70000] + "\n\n... [Nội dung prompt đã được rút gọn để đảm bảo an toàn bộ nhớ tham số Linux]"
 
@@ -163,7 +163,7 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
                 agy_bin,
                 "-p", safe_prompt,
                 "--model", model_name,
-                "--dangerously-skip-permissions"
+                *ai_sandbox.AGY_SAFE_FLAGS
             ]
             res = ai_sandbox.run(cmd, cwd=cwd, timeout=timeout, env=custom_env)
             if res.returncode == 0 and res.stdout.strip():
@@ -186,7 +186,7 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
         cmd = [
             agy_bin,
             "-p", safe_prompt,
-            "--dangerously-skip-permissions"
+            *ai_sandbox.AGY_SAFE_FLAGS
         ]
         res = ai_sandbox.run(cmd, cwd=cwd, timeout=timeout, env=custom_env)
         if res.returncode == 0 and res.stdout.strip():
@@ -354,7 +354,7 @@ def run_claude_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] 
             pass
     custom_env["PATH"] = ":".join(extra_dirs) + ":" + custom_env.get("PATH", "")
 
-    safe_prompt = prompt
+    safe_prompt = ai_sandbox.safe_prompt(prompt)  # nhắc model: không có công cụ
     if len(safe_prompt) > 70000:
         safe_prompt = safe_prompt[:70000] + "\n\n... [Nội dung prompt đã được rút gọn để đảm bảo an toàn bộ nhớ tham số Linux]"
 
@@ -365,7 +365,8 @@ def run_claude_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] 
             cmd = [
                 claude_bin,
                 "-p", safe_prompt,
-                "--model", model_name
+                "--model", model_name,
+                *ai_sandbox.CLAUDE_SAFE_FLAGS
             ]
             res = ai_sandbox.run(cmd, cwd=cwd, timeout=timeout, env=custom_env)
 
@@ -385,7 +386,7 @@ def run_claude_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] 
 
     try:
         write_log(app_name, "🤖 [Claude Code AI] Đang thử phương án gọi claude với cấu hình mặc định...")
-        cmd = [claude_bin, "-p", safe_prompt]
+        cmd = [claude_bin, "-p", safe_prompt, *ai_sandbox.CLAUDE_SAFE_FLAGS]
         res = ai_sandbox.run(cmd, cwd=cwd, timeout=timeout, env=custom_env)
         if res.returncode == 0 and res.stdout.strip():
             write_log(app_name, "✅ [Claude Code AI] Cấu hình mặc định phản hồi thành công!")

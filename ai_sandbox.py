@@ -23,6 +23,24 @@ import shutil
 import subprocess
 from typing import Dict, List, Optional
 
+# Chạy AI CLI KHÔNG CÓ CÔNG CỤ: prompt đã chứa sẵn ngữ cảnh (cây thư mục, file cấu hình, log, sự kiện K3s),
+# model chỉ cần đọc và trả lời. Trước đây Antigravity chạy với --dangerously-skip-permissions nên một câu chat ở
+# AI Debug ("kiểm tra dung lượng VPS") làm agent chạy lệnh bằng root trên máy chủ.
+#   - Antigravity: --mode plan (mọi yêu cầu chạy lệnh / đọc file bị từ chối tự động khi chạy headless)
+#   - Claude Code: --tools "" (không có công cụ nào)
+AGY_SAFE_FLAGS = ["--mode", "plan"]
+CLAUDE_SAFE_FLAGS = ["--tools", ""]
+NO_TOOLS_NOTE = (
+    "[Giới hạn] Bạn KHÔNG có công cụ: không chạy lệnh, không đọc/ghi file, không truy cập máy chủ. "
+    "Chỉ trả lời dựa trên dữ liệu có trong yêu cầu này. Nếu thiếu dữ liệu, nói rõ cần người dùng cung cấp gì; "
+    "không bịa số liệu về máy chủ.\n\n"
+)
+
+
+def safe_prompt(prompt: str) -> str:
+    return NO_TOOLS_NOTE + prompt
+
+
 _SENSITIVE = re.compile(r"SECRET|PASSWORD|PASSWD|TOKEN|CREDENTIAL|PRIVATE|_KEY$|^KEY$|DATABASE_URL|KUBECONFIG|DSN",
                         re.IGNORECASE)
 # Biến xác thực của chính các CLI: giữ lại để CLI còn đăng nhập được

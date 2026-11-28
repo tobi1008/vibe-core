@@ -65,3 +65,19 @@ def test_goi_shows_package_ai_and_permissions(monkeypatch, paths, tmp_path):
     assert "model có sẵn của hệ thống" in text and "KHÔNG được làm" in text
     ac.save("u-alice", "openai", "gpt-x", api_key="sk-abcdefgh1234")
     assert "key riêng của bạn – OpenAI gpt-x" in hermes_tools.run_tool("u-alice", "my_package", {})
+
+
+def test_agy_and_claude_run_without_tools(monkeypatch, paths):
+    """AI CLI không được chạy lệnh / đọc file trên máy chủ: lỗ hổng cũ là --dangerously-skip-permissions"""
+    monkeypatch.delenv("AI_CLI_USER", raising=False)
+    cmds = []
+    monkeypatch.setattr(ai_sandbox.subprocess, "run", lambda cmd, **k: cmds.append(cmd) or
+                        subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr=""))
+    builder_core.run_agy_prompt("kiểm tra dung lượng VPS", app_name="shop")
+    builder_core.run_claude_prompt("kiểm tra dung lượng VPS", app_name="shop")
+    agy, claude = cmds[0], cmds[1]
+    assert "--dangerously-skip-permissions" not in agy and agy[-2:] == ["--mode", "plan"]
+    assert "--dangerously-skip-permissions" not in claude and claude[-2:] == ["--tools", ""]
+    for cmd in (agy, claude):
+        prompt = cmd[cmd.index("-p") + 1]
+        assert prompt.startswith("[Giới hạn] Bạn KHÔNG có công cụ") and prompt.endswith("kiểm tra dung lượng VPS")
