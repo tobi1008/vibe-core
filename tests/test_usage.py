@@ -71,6 +71,7 @@ def test_usage_sums_only_the_apps_own_pods(monkeypatch):
     shop = res["apps"]["shop"]
     assert shop["cpu_m"] == 58 and shop["memory_mi"] == 400  # không cộng Pod của app "shopping"
     assert shop["cpu_limit_m"] == 1500 and shop["memory_limit_mi"] == 1536
+    assert not shop["cpu_unlimited"] and not shop["memory_unlimited"]
     # Database đo bằng du trong Pod (215 MiB), không dùng usedBytes 15 GB của kubelet
     assert shop["db_used_mi"] == 215 and shop["db_capacity_mi"] == 1024
     assert len(shop["pods"]) == 2 and shop["pods"][0]["restarts"] == 2
@@ -101,3 +102,13 @@ def test_domain_check_validates_input(monkeypatch):
     res = client.post("/api/domains/check", json={"domains": ["Shop.Vibe.quyenlt.com", "shop.vibe.quyenlt.com"]}, headers=H)
     assert res.status_code == 200 and [r["domain"] for r in res.json()["results"]] == ["shop.vibe.quyenlt.com"]
     assert client.post("/api/domains/check", json={"domains": ["http://evil/x"]}, headers=H).status_code == 400
+
+
+def test_pod_without_limits_is_marked_unlimited(monkeypatch):
+    fake_kubectl(monkeypatch)
+    PODS["items"].append(pod("blog-5d4f8c7b9d-bcdfg"))
+    try:
+        blog = usage.apps_usage(["blog"])["apps"]["blog"]
+    finally:
+        PODS["items"].pop()
+    assert blog["cpu_unlimited"] and blog["memory_unlimited"] and blog["cpu_limit_m"] == 0

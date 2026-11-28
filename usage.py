@@ -116,7 +116,7 @@ def _du_mi(pod: str, container: str, path: str) -> Optional[int]:
 
 def _empty_app() -> Dict[str, Any]:
     return {"cpu_m": 0, "memory_mi": 0, "cpu_limit_m": 0, "memory_limit_mi": 0, "ephemeral_mi": 0,
-            "db_used_mi": None, "db_capacity_mi": 0, "pods": []}
+            "cpu_unlimited": False, "memory_unlimited": False, "db_used_mi": None, "db_capacity_mi": 0, "pods": []}
 
 
 def apps_usage(apps: List[str], include_nodes: bool = False) -> Dict[str, Any]:
@@ -133,8 +133,14 @@ def apps_usage(apps: List[str], include_nodes: bool = False) -> Dict[str, Any]:
             continue
         entry = out[app]
         spec = pod.get("spec", {})
-        cpu_limit = sum(_cpu_m(((c.get("resources") or {}).get("limits") or {}).get("cpu")) for c in spec.get("containers", []))
-        mem_limit = sum(_mem_mi(((c.get("resources") or {}).get("limits") or {}).get("memory")) for c in spec.get("containers", []))
+        limits = [((c.get("resources") or {}).get("limits") or {}) for c in spec.get("containers", [])]
+        cpu_limit = sum(_cpu_m(lim.get("cpu")) for lim in limits)
+        mem_limit = sum(_mem_mi(lim.get("memory")) for lim in limits)
+        # Chỉ cần một container không khai báo limits là Pod không bị giới hạn (vd app của admin)
+        if any(not lim.get("cpu") for lim in limits):
+            entry["cpu_unlimited"] = True
+        if any(not lim.get("memory") for lim in limits):
+            entry["memory_unlimited"] = True
         st = stats["pods"].get(name, {})
         cpu = int((st.get("cpu", {}).get("usageNanoCores") or 0) / 1e6)
         mem = int((st.get("memory", {}).get("workingSetBytes") or 0) / 1024 ** 2)
