@@ -23,7 +23,6 @@ from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
-import ai_credentials
 import app_scope
 import builder_core
 import cicd_core
@@ -381,8 +380,9 @@ def diagnose(user_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
     app = check_access(user_id, args.get("app"))
     component = _component(args) or "be"
     context = collect_debug_context(app, component)
-    # Dùng key AI mặc định của user nếu có, không thì model của hệ thống
-    engine = ai_credentials.default_engine(user_id) or "hermes"
+    # Model user chọn bằng /ai (mặc định: key riêng nếu có, không thì Hermes)
+    import hermes_prefs
+    engine = hermes_prefs.provider_for(user_id) or "hermes"
     result = query_hermes_diagnostics(context, user_note=args.get("note"), ai_provider=engine, owner_user_id=user_id)
     result["app"] = app
     return result
@@ -422,13 +422,8 @@ def package_text(user_id: str) -> str:
         lines.append("  (chia cho các project khi tạo; đổi mức của từng project ở tab Cài đặt trên web)")
     else:
         lines.append(f"• Project: {owned} (chưa tải được giới hạn của gói, cập nhật web để xem)")
-    engine = ai_credentials.default_engine(user_id)
-    if engine:
-        cred = next((c for c in ai_credentials.list_for(user_id) if c["engine"] == engine), None)
-        ai_line = f"key riêng của bạn – {cred['provider_name']} {cred['model']}" if cred else "key riêng của bạn"
-    else:
-        ai_line = "model có sẵn của hệ thống (gắn key riêng ở trang hồ sơ trên web)"
-    lines.append(f"🤖 AI của Hermes: {ai_line}")
+    import hermes_prefs
+    lines.append(f"🤖 AI của Hermes: {hermes_prefs.label(user_id)} (đổi bằng /ai)")
     lines.append("")
     lines.append(PERMISSIONS_TEXT)
     return "\n".join(lines)

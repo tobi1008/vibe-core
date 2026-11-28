@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import ai_credentials
+import hermes_prefs
 import builder_core
 import hermes_tools
 import telegram_client as tg
@@ -66,6 +67,9 @@ QUY TẮC:
 10. Người dùng nhờ "AI Debug", debug sâu, đọc/sửa code hay file K3s, hoặc chỉ định model (Gemini 4 Hydrogen, Antigravity,
    Claude Code) thì gọi ai_debug với request là yêu cầu của họ (đủ chi tiết) và engine tương ứng
    (hydrogen / agy / claude; không nói model thì để trống). ai_debug chạy nền và tự gửi kết quả; đừng tự bịa kết quả.
+
+Bạn đang chạy bằng model: {model}. Người dùng đổi model của bạn bằng lệnh /ai (Hermes miễn phí, Gemini 3.8 Flash,
+Gemini 4 Hydrogen, Claude Code, hoặc key AI riêng). Hỏi bạn dùng model gì thì trả lời đúng tên này, không đoán.
 
 Ứng dụng của người dùng: {apps}
 """
@@ -124,15 +128,20 @@ def call_llm(prompt: str) -> str:
 
 
 def user_engine(user_id: str) -> Optional[str]:
-    """Key AI mặc định của user ("byo:<id>"); None thì Hermes dùng model của hệ thống"""
-    return ai_credentials.default_engine(user_id)
+    """ai_provider Hermes dùng cho user (chọn bằng /ai); None = model miễn phí qua Hermes gateway"""
+    return hermes_prefs.provider_for(user_id)
+
+
+# Antigravity / Claude Code là CLI, mỗi lượt chậm hơn gateway nên cho thời gian dài hơn
+CLI_LLM_TIMEOUT = 150
 
 
 def llm_for(user_id: str) -> Callable[[str], str]:
     engine = user_engine(user_id)
     if not engine:
         return call_llm
-    return lambda prompt: builder_core.call_ai_prompt(prompt, app_name=LOG_NAME, timeout=LLM_TIMEOUT,
+    timeout = LLM_TIMEOUT if ai_credentials.is_byo(engine) else CLI_LLM_TIMEOUT
+    return lambda prompt: builder_core.call_ai_prompt(prompt, app_name=LOG_NAME, timeout=timeout,
                                                       ai_provider=engine, owner_user_id=user_id)
 
 
@@ -158,7 +167,8 @@ def build_prompt(user_id: str, history: List[Dict[str, str]], message: str, step
         apps = ", ".join(hermes_tools.visible_apps(user_id)) or "(chưa có ứng dụng)"
     except user_directory.DirectoryUnavailable:
         apps = "(không tra cứu được)"
-    parts = [SYSTEM_PROMPT.format(tools=hermes_tools.describe_tools(), apps=apps, web_url=WEB_URL)]
+    parts = [SYSTEM_PROMPT.format(tools=hermes_tools.describe_tools(), apps=apps, web_url=WEB_URL,
+                                  model=hermes_prefs.label(user_id))]
     if history:
         parts.append("--- HỘI THOẠI TRƯỚC ---")
         for h in history[-HISTORY_TURNS:]:
@@ -194,8 +204,8 @@ def run_agent(chat_id: int, user_id: str, history: List[Dict[str, str]], message
             decision = parse_decision(llm(build_prompt(user_id, history, message, steps)))
         except Exception as e:
             builder_core.write_log(LOG_NAME, f"⚠️ Hermes LLM lỗi: {e}")
-            own = " (key AI riêng của bạn – kiểm tra key/model ở trang hồ sơ)" if user_engine(user_id) else " (đã thử 3 model)"
-            return {"reply": f"⚠️ Hermes LLM đang không phản hồi{own}. Bạn thử lại sau ít phút nhé.",
+            own = f" ({hermes_prefs.label(user_id)})" if user_engine(user_id) else " (đã thử 3 model)"
+            return {"reply": f"⚠️ Hermes LLM đang không phản hồi{own}. Thử lại sau ít phút, hoặc đổi model bằng /ai.",
                     "approvals": approvals}
 
         tool_name = decision.get("tool")
@@ -293,6 +303,7 @@ HELP_TEXT = (
     "/redeploy <app> [nhánh] – kéo code mới từ GitHub và build lại\n"
     "\n"
     "⚙️ KHÁC:\n"
+    "/ai – chọn model AI cho Hermes (Hermes miễn phí, Gemini 3.8 Flash, Gemini 4 Hydrogen, Claude Code, key riêng)\n"
     "/reset – xóa lịch sử, bắt đầu hội thoại mới\n"
     "/unlink – hủy liên kết Telegram này\n"
     "/help – xem lại hướng dẫn\n"
@@ -324,6 +335,7 @@ BOT_COMMANDS = [
     ("events", "Sự kiện K3s: /events <app>"),
     ("history", "Các phiên bản đã triển khai: /history <app>"),
     ("report", "Báo cáo sau triển khai: /report <app>"),
+    ("ai", "Chọn model AI cho Hermes"),
     ("reset", "Bắt đầu hội thoại mới"),
     ("help", "Hướng dẫn"),
     ("unlink", "Hủy liên kết Telegram"),
@@ -431,6 +443,8 @@ class Butler:
                 self.executor.submit(self._propose_action, chat_id, user_id, tool, args)
             else:
                 self.executor.submit(self._direct_tool, chat_id, user_id, tool, args)
+        elif command == "/ai":
+            self.send_ai_menu(chat_id, user_id)
         elif command == "/aidebug":
             parts = text.split(maxsplit=3)
             if len(parts) < 3:
@@ -469,6 +483,26 @@ class Butler:
             self.send(chat_id, HELP_TEXT)
         else:
             self.send(chat_id, NOT_LINKED_TEXT)
+
+    def send_ai_menu(self, chat_id: int, user_id: str) -> None:
+        current = hermes_prefs.get_engine(user_id)
+        has_key = bool(ai_credentials.default_engine(user_id))
+        rows = []
+        for engine, name in hermes_prefs.ENGINES.items():
+            if engine == "key" and not has_key:
+                continue
+            rows.append([{"text": ("✅ " if engine == current else "") + name, "callback_data": f"ai:{engine}"}])
+        text = (f"🤖 Hermes đang dùng: {hermes_prefs.label(user_id)}\n\n"
+                "Chọn model cho Hermes (trò chuyện và /debug):\n"
+                "• Hermes: miễn phí, nhanh, nhưng yếu hơn\n"
+                "• Gemini 3.8 Flash / Gemini 4 Hydrogen / Claude Code: thông minh hơn, mỗi câu trả lời chậm hơn (5–30 giây)\n"
+                + ("• Key AI riêng: dùng API key bạn đã gắn trên web\n" if has_key else
+                   "• Muốn dùng API key của riêng bạn: gắn ở trang Integrations trên web\n")
+                + "\nAI Debug sửa code (/aidebug) chọn model riêng ngay trong lệnh.")
+        try:
+            tg.send_message(chat_id, text, tg.inline_keyboard(rows))
+        except Exception as e:
+            builder_core.write_log(LOG_NAME, f"⚠️ Gửi menu /ai thất bại: {e}")
 
     def _start_ai_debug_command(self, chat_id: int, user_id: str, args: Dict[str, Any]) -> None:
         try:
@@ -616,6 +650,16 @@ class Butler:
                 self.record_system_note(chat_id, f"Người dùng bỏ qua, KHÔNG thực hiện: {approval['description']}")
                 return
             self.executor.submit(self.execute_approval, approval)
+        elif kind == "ai":
+            if message_id:
+                tg.clear_keyboard(chat_id, message_id)
+            try:
+                hermes_prefs.set_engine(link["user_id"], value)
+            except ValueError as e:
+                self.send(chat_id, f"⚠️ {e}")
+                return
+            self.send(chat_id, f"✅ Từ giờ Hermes dùng: {hermes_prefs.label(link['user_id'])}")
+            self.record_system_note(chat_id, f"Người dùng đổi model của Hermes sang {hermes_prefs.label(link['user_id'])}.")
         elif kind == "df":
             self.executor.submit(self.send_agent_diff, chat_id, link["user_id"], value)
         elif kind == "dg":

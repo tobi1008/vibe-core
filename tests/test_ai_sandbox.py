@@ -60,9 +60,9 @@ def test_goi_shows_package_ai_and_permissions(monkeypatch, paths, tmp_path):
     monkeypatch.setattr(user_directory, "get_directory", lambda force=False: DIRECTORY)
     text = hermes_tools.run_tool("u-alice", "my_package", {})
     assert "Free" in text and "Project: 1/2" in text and "250m" in text and "không có trong gói" in text and "Tổng CPU" in text
-    assert "model có sẵn của hệ thống" in text and "KHÔNG được làm" in text
+    assert "AI của Hermes: Hermes (model miễn phí" in text and "KHÔNG được làm" in text
     ac.save("u-alice", "openai", "gpt-x", api_key="sk-abcdefgh1234")
-    assert "key riêng của bạn – OpenAI gpt-x" in hermes_tools.run_tool("u-alice", "my_package", {})
+    assert "Key AI riêng của bạn – OpenAI gpt-x" in hermes_tools.run_tool("u-alice", "my_package", {})
 
 
 def test_agy_and_claude_run_without_tools(monkeypatch, paths):

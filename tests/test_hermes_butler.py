@@ -1020,3 +1020,50 @@ def test_start_ai_debug_wires_real_session(env, monkeypatch, tmp_path):
     app, comp, request, engine, user_id, workspace = calls[0][:6]
     assert (app, comp, request, engine, user_id, workspace) == ("shop", "be", "sửa lỗi", "claude", "u-alice", str(tmp_path))
     assert s["engine"] == "claude"
+
+
+# ─────────────────────────── /ai: chọn model cho Hermes ───────────────────────────
+
+def test_ai_menu_and_switch_to_hydrogen(env, monkeypatch):
+    import hermes_prefs
+    link(111, "u-alice")
+    assert hermes_prefs.get_engine("u-alice") == "hermes"
+    env["bot"].handle_message(private_message(111, "/ai"))
+    _, text, markup = env["sent"][-1]
+    buttons = [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
+    assert "Hermes đang dùng: Hermes (model miễn phí" in text
+    assert buttons == ["ai:hermes", "ai:agy", "ai:hydrogen", "ai:claude"]  # chưa có key riêng nên không có nút key
+
+    env["bot"].handle_callback(callback(111, "ai:hydrogen"))
+    assert hermes_prefs.get_engine("u-alice") == "hydrogen"
+    assert "Gemini 4 Hydrogen" in env["sent"][-1][1]
+
+    used = []
+    monkeypatch.setattr(hermes_butler.builder_core, "call_ai_prompt",
+                        lambda prompt, **k: used.append((prompt, k)) or '{"reply": "xin chào"}')
+    result = hermes_butler.run_agent(111, "u-alice", [], "bạn dùng model gì?")
+    assert result["reply"] == "xin chào"
+    prompt, kwargs = used[-1]
+    assert kwargs["ai_provider"] == "hydrogen" and "Bạn đang chạy bằng model: Gemini 4 Hydrogen" in prompt
+
+
+def test_ai_key_option_needs_a_key(env):
+    import hermes_prefs
+    link(111, "u-alice")
+    env["bot"].handle_callback(callback(111, "ai:key"))
+    assert "chưa gắn key" in env["sent"][-1][1] and hermes_prefs.get_engine("u-alice") == "hermes"
+    env["bot"].handle_callback(callback(111, "ai:gpt9"))
+    assert "không hợp lệ" in env["sent"][-1][1]
+
+
+def test_diagnose_follows_chosen_model(env, monkeypatch):
+    import hermes_agent_router
+    import hermes_prefs
+    hermes_prefs.set_engine("u-alice", "claude")
+    seen = {}
+    monkeypatch.setattr(hermes_agent_router, "collect_debug_context", lambda app, comp="be": {})
+    monkeypatch.setattr(hermes_agent_router, "query_hermes_diagnostics",
+                        lambda ctx, **k: seen.update(k) or {"diagnosis": "ok", "actions": []})
+    hermes_tools.diagnose("u-alice", {"app": "shop"})
+    assert seen["ai_provider"] == "claude"
+    assert "Claude Code (đổi bằng /ai)" in hermes_tools.package_text("u-alice")

@@ -38,6 +38,7 @@ try:
     import main  # noqa: E402
     import package_limits  # noqa: E402
     import ai_credentials  # noqa: E402
+    import hermes_prefs  # noqa: E402
 finally:
     os.makedirs = _real_makedirs
 
@@ -53,11 +54,13 @@ def paths(tmp_path, monkeypatch):
         d.mkdir()
     config_file = tmp_path / "apps_config.json"
 
-    for mod in (builder_core, main, cicd_core, file_manager_api, hermes_agent_router, archive_builder_core, package_limits, ai_credentials):
+    for mod in (builder_core, main, cicd_core, file_manager_api, hermes_agent_router, archive_builder_core, package_limits, ai_credentials, hermes_prefs):
         if hasattr(mod, "BASE_WORKSPACE"):
             monkeypatch.setattr(mod, "BASE_WORKSPACE", str(ws))
         if hasattr(mod, "LOGS_DIR"):
             monkeypatch.setattr(mod, "LOGS_DIR", str(logs))
+        if hasattr(mod, "PREFS_FILE"):
+            monkeypatch.setattr(mod, "PREFS_FILE", str(tmp_path / "hermes_prefs.json"))
         if hasattr(mod, "AI_CREDENTIALS_FILE"):
             monkeypatch.setattr(mod, "AI_CREDENTIALS_FILE", str(tmp_path / "ai_credentials.json"))
             monkeypatch.setattr(mod, "APP_OWNERS_FILE", str(tmp_path / "app_owners.json"))
