@@ -796,7 +796,7 @@ def test_list_apps_flags_apps_without_owner_for_admin(env, monkeypatch):
     monkeypatch.setattr(hermes_tools, "all_app_names", lambda: ["blog", "old-test", "shop"])
     out = hermes_tools.run_tool("u-admin", "list_apps", {})
     assert "- old-test (old-test.vibe.quyenlt.com) ⚠️ không có chủ trên web" in out
-    assert "- shop (shop.vibe.quyenlt.com)\n" in out and "1 app không còn project" in out
+    assert "- shop (shop.vibe.quyenlt.com) · của @alice\n" in out and "1 app không còn project" in out
     assert "không có chủ" not in hermes_tools.run_tool("u-alice", "list_apps", {})
 
 
@@ -904,3 +904,23 @@ def test_goi_command_replies_with_package_and_permissions(env):
     text = env["sent"][-1][1]
     assert "📦 Gói hosting" in text and "KHÔNG được làm" in text and "ứng dụng của người dùng khác" in text
     assert "/goi" in hermes_butler.HELP_TEXT and ("goi", "Gói hosting, giới hạn và quyền của Hermes") in hermes_butler.BOT_COMMANDS
+
+
+def test_admin_apps_list_shows_owner_and_ingress_domains(env, monkeypatch):
+    monkeypatch.setattr(hermes_tools, "app_domains", lambda app: [f"{app}.vibe.quyenlt.com"])
+    out = hermes_tools.run_tool("u-admin", "list_apps", {})
+    assert "- blog (blog.vibe.quyenlt.com) · của @bob" in out and "- shop (shop.vibe.quyenlt.com) · của @alice" in out
+    alice = hermes_tools.run_tool("u-alice", "list_apps", {})
+    assert "của @" not in alice
+
+
+def test_domains_fall_back_to_ingress_hosts(monkeypatch):
+    import subprocess as sp
+    monkeypatch.setattr(hermes_tools, "load_all_configs", lambda: {"shop": {"repo_url": "x"}})
+    ingresses = {"items": [
+        {"metadata": {"name": "shop"}, "spec": {"rules": [{"host": "Shop.Example.com"}]}},
+        {"metadata": {"name": "shopping"}, "spec": {"rules": [{"host": "other.com"}]}},
+    ]}
+    monkeypatch.setattr(hermes_tools.subprocess, "run",
+                        lambda cmd, **k: sp.CompletedProcess(cmd, 0, stdout=__import__("json").dumps(ingresses), stderr=""))
+    assert hermes_tools.app_domains("shop") == ["shop.example.com"]

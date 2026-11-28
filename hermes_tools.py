@@ -62,6 +62,25 @@ def all_app_names() -> List[str]:
     return sorted({user_directory.base_app_name(name) for name in load_all_configs()})
 
 
+def ingress_hosts(app_name: str) -> List[str]:
+    """Tên miền trong Ingress của app trên K3s (cho app triển khai trước khi cấu hình lưu tên miền)"""
+    try:
+        res = subprocess.run(["kubectl", "get", "ingress", "-n", builder_core.K8S_NAMESPACE, "-o", "json"],
+                             capture_output=True, text=True, timeout=20)
+        items = json.loads(res.stdout or "{}").get("items", []) if res.returncode == 0 else []
+    except Exception:
+        return []
+    hosts: List[str] = []
+    for item in items:
+        if not app_scope.owns_resource(app_name, item.get("metadata", {}).get("name", "")):
+            continue
+        for rule in (item.get("spec") or {}).get("rules") or []:
+            h = (rule.get("host") or "").strip().lower()
+            if h and h not in hosts:
+                hosts.append(h)
+    return hosts
+
+
 def app_domains(app_name: str) -> List[str]:
     configs = load_all_configs()
     domains: List[str] = []
@@ -72,7 +91,7 @@ def app_domains(app_name: str) -> List[str]:
             d = (cfg.get(key) or "").strip()
             if d and d not in domains:
                 domains.append(d)
-    return domains
+    return domains or ingress_hosts(app_name)
 
 
 def visible_apps(user_id: str) -> List[str]:
@@ -168,13 +187,19 @@ def tool_list_apps(user_id: str, args: Dict[str, Any]) -> str:
         return "Tài khoản chưa có ứng dụng nào."
     lines = [f"Có {len(apps)} ứng dụng:"]
     orphans = 0
+    is_admin = user_directory.is_admin(user_id)
+    users = user_directory.get_directory()["users"] if is_admin else {}
     for app in apps:
         domains = app_domains(app)
         line = f"- {app}" + (f" ({', '.join(domains)})" if domains else "")
+        owners = user_directory.owners_of(app)
         # Chỉ admin thấy app không thuộc ai: còn cấu hình trên Vibe Core nhưng không còn project trên web
-        if not user_directory.owners_of(app):
+        if not owners:
             line += " ⚠️ không có chủ trên web"
             orphans += 1
+        elif is_admin and user_id not in owners:
+            # Admin thấy cả app của người khác: ghi rõ chủ để không nhầm với app của mình
+            line += " · của " + ", ".join(f"@{(users.get(o) or {}).get('username', o)}" for o in owners)
         lines.append(line)
     if orphans:
         lines.append(f"\n{orphans} app không còn project trên web (cấu hình sót lại trên máy chủ). "

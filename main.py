@@ -309,6 +309,7 @@ async def trigger_deploy(req: DeployRequest, background_tasks: BackgroundTasks):
     save_app_config(req.app_name, {
         "auto_cicd": True,
         "repo_url": req.repo_url,
+        "app_domain": req.app_domain,
         "primary_github_owner": owner,
         "has_token": bool(req.github_token),
         "ai_provider": ai_engine
@@ -347,6 +348,7 @@ async def trigger_deploy_open_source(req: OpenSourceDeployRequest, background_ta
         "auto_cicd": True,
         "deploy_type": "open_source_clean_db",
         "cms_type": detected_cms,
+        "app_domain": req.app_domain,
         "repo_url": redact_secrets(final_url),
         "db_type": db_type,
         "primary_github_owner": owner,
@@ -408,6 +410,7 @@ async def trigger_deploy_db(
     save_app_config(app_name, {
         "auto_cicd": True,
         "repo_url": repo_url,
+        "app_domain": app_domain,
         "db_type": db_type,
         "primary_github_owner": owner,
         "has_token": bool(github_token),
@@ -604,6 +607,8 @@ async def trigger_deploy_monorepo(req: MonorepoDeployRequest, background_tasks: 
     save_app_config(req.app_name, {
         "auto_cicd": True,
         "repo_url": req.repo_url,
+        "be_domain": req.be_domain,
+        "fe_domain": req.fe_domain or None,
         "primary_github_owner": owner,
         "has_token": bool(req.github_token),
         "ai_provider": ai_engine
