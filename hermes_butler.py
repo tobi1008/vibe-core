@@ -32,6 +32,7 @@ MAX_STEPS = 6
 HISTORY_TURNS = 10
 APPROVAL_TTL = 30 * 60
 LLM_TIMEOUT = 60
+AGENT_POLL_SECONDS = 5
 LOG_NAME = "hermes-butler"
 WEB_URL = "https://vibe.quyenlt.com"
 
@@ -62,6 +63,9 @@ QUY TẮC:
    (tab Cài đặt của project). Bạn không thể nâng tài nguyên vượt mức đã phân bổ;
    app thiếu RAM/CPU (OOMKilled, chậm) thì giải thích và đề nghị tăng mức cho app ở tab Cài đặt, tối ưu app hoặc nâng gói.
    Hỏi về gói, giới hạn hay quyền của bạn thì gọi công cụ my_package.
+10. Người dùng nhờ "AI Debug", debug sâu, đọc/sửa code hay file K3s, hoặc chỉ định model (Gemini 4 Hydrogen, Antigravity,
+   Claude Code) thì gọi ai_debug với request là yêu cầu của họ (đủ chi tiết) và engine tương ứng
+   (hydrogen / agy / claude; không nói model thì để trống). ai_debug chạy nền và tự gửi kết quả; đừng tự bịa kết quả.
 
 Ứng dụng của người dùng: {apps}
 """
@@ -205,6 +209,14 @@ def run_agent(chat_id: int, user_id: str, history: List[Dict[str, str]], message
             continue
 
         try:
+            if tool_name == "ai_debug":
+                session = hermes_tools.start_ai_debug(user_id, args)
+                engine = hermes_tools.AGENT_ENGINE_NAMES.get(session["engine"], session["engine"])
+                reply = (f"🧠 Đã bắt đầu AI Debug cho {session['app']} bằng {engine}.\n"
+                         "Model đang đọc mã nguồn và file K3s trên một bản sao của app (app thật chưa bị đụng tới). "
+                         "Thường mất 1–5 phút, xong mình sẽ gửi kết quả kèm nút Áp dụng.")
+                return {"reply": reply, "approvals": approvals, "agent_session": session["id"]}
+
             if tool_name == "diagnose":
                 result = hermes_tools.diagnose(user_id, args)
                 blocked = []
@@ -259,6 +271,7 @@ HELP_TEXT = (
     "• \"xem log backend của shop, có lỗi database không?\"\n"
     "• \"shop chạy chậm, kiểm tra giúp\"\n"
     "• \"bản deploy mới của shop bị lỗi, quay lại bản trước\"\n"
+    "• \"dùng AI Debug với Gemini 4 Hydrogen sửa lỗi CORS của shop\"\n"
     "\n"
     "🔎 XEM NHANH (trả lời ngay, không qua AI):\n"
     "/apps – danh sách ứng dụng của bạn\n"
@@ -272,7 +285,9 @@ HELP_TEXT = (
     "/report <app> – báo cáo kiểm tra sau lần triển khai gần nhất\n"
     "\n"
     "🩺 NHỜ HERMES XỬ LÝ:\n"
-    "/debug <app> [mô tả lỗi] – chẩn đoán nguyên nhân và đề xuất cách sửa\n"
+    "/debug <app> [mô tả lỗi] – chẩn đoán nhanh nguyên nhân và đề xuất cách sửa\n"
+    "/aidebug <app> [hydrogen|agy|claude] <yêu cầu> – dùng AI Debug của hosting: model đọc/sửa code và file K3s "
+    "trên bản sao, gửi diff để bạn bấm Áp dụng (mặc định Gemini 4 Hydrogen)\n"
     "/restart <app> [be|fe] – khởi động lại ứng dụng\n"
     "/rollback <app> [revision] – quay về bản trước (hoặc một revision trong /history)\n"
     "/redeploy <app> [nhánh] – kéo code mới từ GitHub và build lại\n"
@@ -301,6 +316,7 @@ BOT_COMMANDS = [
     ("logs", "Log đang chạy: /logs <app> [be|fe]"),
     ("check", "Kiểm tra HTTPS: /check <app>"),
     ("debug", "Chẩn đoán lỗi: /debug <app> [mô tả]"),
+    ("aidebug", "AI Debug sửa code/K3s: /aidebug <app> [hydrogen|agy|claude] <yêu cầu>"),
     ("restart", "Khởi động lại: /restart <app> [be|fe]"),
     ("rollback", "Quay về bản trước: /rollback <app> [revision]"),
     ("redeploy", "Build lại từ GitHub: /redeploy <app> [nhánh]"),
@@ -342,6 +358,8 @@ class Butler:
         self.history: Dict[int, List[Dict[str, str]]] = {}
         self.chat_locks: Dict[int, threading.Lock] = {}
         self.executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="hermes-butler")
+        # Chờ phiên AI Debug (có thể vài phút) ở pool riêng để không chiếm luồng trả lời tin nhắn
+        self.watchers = ThreadPoolExecutor(max_workers=8, thread_name_prefix="hermes-ai-debug")
         self._locks_guard = threading.Lock()
 
     # ---- gửi tin ----
@@ -413,6 +431,17 @@ class Butler:
                 self.executor.submit(self._propose_action, chat_id, user_id, tool, args)
             else:
                 self.executor.submit(self._direct_tool, chat_id, user_id, tool, args)
+        elif command == "/aidebug":
+            parts = text.split(maxsplit=3)
+            if len(parts) < 3:
+                self.send(chat_id, "Cú pháp: /aidebug <app> [hydrogen|agy|claude] <việc cần kiểm tra/sửa>\n"
+                                   "Ví dụ: /aidebug shop hydrogen trang chủ báo lỗi 500, tìm nguyên nhân và sửa")
+                return
+            engine, request = "", " ".join(parts[2:])
+            if parts[2].lower() in hermes_tools.AGENT_ENGINES and len(parts) > 3:
+                engine, request = parts[2], parts[3]
+            self.executor.submit(self._start_ai_debug_command, chat_id, user_id,
+                                 {"app": parts[1], "engine": engine, "request": request})
         elif command == "/debug":
             parts = text.split(maxsplit=2)
             if len(parts) < 2:
@@ -440,6 +469,20 @@ class Butler:
             self.send(chat_id, HELP_TEXT)
         else:
             self.send(chat_id, NOT_LINKED_TEXT)
+
+    def _start_ai_debug_command(self, chat_id: int, user_id: str, args: Dict[str, Any]) -> None:
+        try:
+            session = hermes_tools.start_ai_debug(user_id, args)
+        except hermes_tools.ToolError as e:
+            self.send(chat_id, f"⚠️ {e}")
+            return
+        except user_directory.DirectoryUnavailable:
+            self.send(chat_id, "⚠️ Không tra cứu được tài khoản trên Vibe Hosting, bạn thử lại sau nhé.")
+            return
+        engine = hermes_tools.AGENT_ENGINE_NAMES.get(session["engine"], session["engine"])
+        self.send(chat_id, f"🧠 Đã bắt đầu AI Debug cho {session['app']} bằng {engine}. "
+                           "Model làm việc trên bản sao của app; xong mình gửi kết quả kèm nút Áp dụng.")
+        self.watchers.submit(self.watch_agent_session, chat_id, user_id, session["id"])
 
     def _propose_action(self, chat_id: int, user_id: str, tool: str, args: Dict[str, Any]) -> None:
         """Lệnh /restart, /rollback, /redeploy: kiểm tra quyền rồi gửi nút Duyệt, chưa thực thi gì"""
@@ -476,6 +519,73 @@ class Butler:
             history.append({"role": "assistant", "content": result["reply"][:1000]})
             del history[:-HISTORY_TURNS * 2]
             self.send(chat_id, result["reply"], result["approvals"])
+        if result.get("agent_session"):
+            self.watchers.submit(self.watch_agent_session, chat_id, user_id, result["agent_session"])
+
+    # ---- AI Debug chế độ Agent ----
+    def watch_agent_session(self, chat_id: int, user_id: str, session_id: str) -> None:
+        """Chờ phiên AI Debug xong rồi gửi kết quả: câu trả lời của model, các file đã sửa, nút Áp dụng / Xem diff"""
+        import ai_agent_session as agent
+        deadline = time.time() + agent.AGENT_TIMEOUT + 120
+        session: Dict[str, Any] = {}
+        while time.time() < deadline:
+            try:
+                session = agent.load_session(session_id)
+            except agent.AgentError:
+                break
+            if session.get("status") != "running":
+                break
+            time.sleep(AGENT_POLL_SECONDS)
+        if not session or session.get("status") == "running":
+            self.send(chat_id, "⚠️ Phiên AI Debug chạy quá lâu, mình chưa nhận được kết quả. Xem lại trên web (tab AI Debug).")
+            return
+        app = session["app"]
+        if session["status"] == "error":
+            self.send(chat_id, f"⚠️ AI Debug cho {app} lỗi: {session.get('error')}")
+            self.record_system_note(chat_id, f"AI Debug cho {app} lỗi: {session.get('error')}")
+            return
+        reply = re.sub(r"\(file://[^)]*\)", "", session.get("reply") or "").strip()
+        changes = session.get("changes") or []
+        allowed = [c["path"] for c in changes if not c.get("blocked")]
+        lines = [f"🧠 Kết quả AI Debug cho {app}:", "", reply[:2800] or "(model không trả lời gì)"]
+        if changes:
+            lines += ["", f"📝 {len(changes)} file thay đổi trên bản sao:"]
+            for c in changes[:15]:
+                status = {"modified": "sửa", "added": "thêm", "deleted": "xóa"}.get(c["status"], c["status"])
+                lines.append(f"• {c['path']} ({status})" + (f" ⛔ {c['blocked'][:120]}" if c.get("blocked") else ""))
+        text = "\n".join(lines)[:3900]
+        approvals = []
+        if allowed:
+            approvals.append(create_approval(chat_id, user_id, "apply_agent",
+                                             {"app": app, "session": session_id, "paths": allowed}))
+        try:
+            tg.send_message(chat_id, text, tg.inline_keyboard([[{"text": "📄 Xem diff", "callback_data": f"df:{session_id}"}]])
+                            if changes else None)
+            for approval in approvals:
+                tg.send_message(chat_id, f"🔧 Đề xuất: {approval['description']}", approval_keyboard(approval))
+        except Exception as e:
+            builder_core.write_log(LOG_NAME, f"⚠️ Gửi kết quả AI Debug thất bại: {e}")
+        note = f"AI Debug cho {app} xong: {len(changes)} file thay đổi, " + ("đang chờ người dùng bấm Áp dụng." if allowed else "không có gì để áp dụng.")
+        self.record_system_note(chat_id, note + " Tóm tắt: " + reply[:500])
+
+    def send_agent_diff(self, chat_id: int, user_id: str, session_id: str) -> None:
+        import ai_agent_session as agent
+        try:
+            session = agent.load_session(session_id)
+            hermes_tools.check_access(user_id, session["app"])
+        except (agent.AgentError, hermes_tools.ToolError) as e:
+            self.send(chat_id, f"⚠️ {e}")
+            return
+        changes = session.get("changes") or []
+        if not changes:
+            self.send(chat_id, "Phiên này không có file nào thay đổi.")
+            return
+        for c in changes[:6]:
+            diff = c.get("diff") or "(không có diff)"
+            body = diff if len(diff) <= 3500 else diff[:3500] + "\n… (còn tiếp, xem đầy đủ trên web)"
+            self.send(chat_id, f"📄 {c['path']}\n\n{body}")
+        if len(changes) > 6:
+            self.send(chat_id, f"Còn {len(changes) - 6} file nữa, xem đầy đủ trên web (tab AI Debug).")
 
     def handle_callback(self, callback: Dict[str, Any]) -> None:
         data = callback.get("data") or ""
@@ -506,6 +616,8 @@ class Butler:
                 self.record_system_note(chat_id, f"Người dùng bỏ qua, KHÔNG thực hiện: {approval['description']}")
                 return
             self.executor.submit(self.execute_approval, approval)
+        elif kind == "df":
+            self.executor.submit(self.send_agent_diff, chat_id, link["user_id"], value)
         elif kind == "dg":
             text = f"Ứng dụng {value} vừa được báo có sự cố. Hãy kiểm tra nguyên nhân và đề xuất cách xử lý."
             self.executor.submit(self.converse, chat_id, link["user_id"], text)

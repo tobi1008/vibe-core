@@ -438,6 +438,72 @@ def tool_my_package(user_id: str, args: Dict[str, Any]) -> str:
     return package_text(user_id)
 
 
+# ─────────────────────────── AI Debug chế độ Agent (qua Telegram) ───────────────────────────
+
+AGENT_ENGINES = {
+    "hydrogen": "hydrogen", "gemini-4-hydrogen": "hydrogen", "gemini 4 hydrogen": "hydrogen", "gemini4": "hydrogen",
+    "agy": "agy", "antigravity": "agy", "gemini": "agy", "gemini-flash": "agy", "flash": "agy",
+    "claude": "claude", "claude-code": "claude", "claude code": "claude", "anthropic": "claude",
+}
+AGENT_ENGINE_NAMES = {"hydrogen": "Gemini 4 Hydrogen", "agy": "Google Antigravity (Gemini Flash)", "claude": "Claude Code"}
+DEFAULT_AGENT_ENGINE = "hydrogen"
+
+
+def normalize_agent_engine(value: Any) -> str:
+    key = str(value or "").strip().lower()
+    if not key:
+        return DEFAULT_AGENT_ENGINE
+    if key not in AGENT_ENGINES:
+        raise ToolError("Model cho AI Debug chỉ có: hydrogen (Gemini 4 Hydrogen), agy (Antigravity), claude (Claude Code).")
+    return AGENT_ENGINES[key]
+
+
+def start_ai_debug(user_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Mở phiên AI Debug chế độ Agent cho app của user (chạy nền): model đọc/sửa mã nguồn và file K3s trên BẢN SAO,
+    chỉ áp dụng khi người dùng bấm duyệt. Trả về phiên (id, app, engine)"""
+    import ai_agent_session as agent
+    from hermes_agent_router import collect_debug_context, resolve_workspace
+    app = check_access(user_id, args.get("app"))
+    request = str(args.get("request") or args.get("note") or "").strip()
+    if not request:
+        raise ToolError("Thiếu mô tả việc cần AI Debug kiểm tra/sửa.")
+    engine = normalize_agent_engine(args.get("engine"))
+    component = _component(args) or "be"
+    workspace = resolve_workspace(app, component)
+    if not workspace:
+        raise ToolError(f"Không tìm thấy mã nguồn của {app} trên máy chủ.")
+    try:
+        return agent.start_session(app, component, request, engine, user_id, workspace,
+                                   collect_debug_context(app, component), app_domains(app))
+    except agent.AgentError as e:
+        raise ToolError(str(e))
+
+
+def tool_apply_agent(user_id: str, args: Dict[str, Any]) -> str:
+    """Áp dụng các file phiên AI Debug đã sửa (chỉ chạy sau khi người dùng bấm Duyệt)"""
+    import ai_agent_session as agent
+    from hermes_agent_router import _agent_execute
+    app = check_access(user_id, args.get("app"))
+    try:
+        session = agent.load_session(str(args.get("session") or ""))
+        if session.get("user_id") not in (None, user_id) and not user_directory.is_admin(user_id):
+            raise ToolError("Phiên AI Debug này không phải của bạn.")
+        result = agent.apply_session(session["id"], app, args.get("paths"), True, _agent_execute)
+    except agent.AgentError as e:
+        raise ToolError(str(e))
+    lines = [f"Đã áp dụng thay đổi AI Debug cho {app}:"]
+    for r in result["results"]:
+        mark = "✅" if r.get("status") == "success" else "⏭️"
+        extra = ""
+        if r.get("apply"):
+            extra = " · apply K3s " + ("thành công" if r["apply"].get("status") == "success" else f"lỗi: {r['apply'].get('message')}")
+        lines.append(f"{mark} {r['path']}{extra}" + (f" ({r.get('message')})" if r.get("status") != "success" else ""))
+    if result.get("rebuild"):
+        rb = result["rebuild"]
+        lines.append("🔨 Build lại: " + ("thành công" if rb.get("status") == "success" else f"lỗi: {rb.get('message')}"))
+    return "\n".join(lines)
+
+
 # ─────────────────────────── Bảng đăng ký công cụ ───────────────────────────
 
 Tool = Dict[str, Any]
@@ -463,6 +529,11 @@ TOOLS: Dict[str, Tool] = {
     "deploy_history": {"fn": tool_deploy_history, "mutating": False,
                        "args": '{"app": "tên app", "component": "be|fe (tùy chọn)"}',
                        "desc": "Lịch sử phiên bản (revision) và trạng thái từng bản."},
+    "ai_debug": {"fn": None, "mutating": False,
+                 "args": '{"app": "tên app", "request": "việc cần kiểm tra/sửa", "engine": "hydrogen|agy|claude", "component": "be|fe (tùy chọn)"}',
+                 "desc": "Chạy chức năng AI Debug (chế độ Agent) của hosting: model đọc mã nguồn, file K3s của app trên bản sao, "
+                         "tìm lỗi và sửa; xong sẽ gửi kết quả kèm nút Áp dụng. engine: hydrogen = Gemini 4 Hydrogen (mặc định), "
+                         "agy = Antigravity Gemini Flash, claude = Claude Code. Mất khoảng 1–10 phút."},
     "diagnose": {"fn": None, "mutating": False, "args": '{"app": "tên app", "component": "be|fe (tùy chọn)", "note": "mô tả lỗi"}',
                  "desc": "Chẩn đoán sâu và đề xuất hành động khắc phục; người dùng sẽ được hỏi duyệt từng hành động."},
     "restart_app": {"fn": tool_restart_app, "mutating": True,
@@ -479,6 +550,7 @@ TOOLS: Dict[str, Tool] = {
 # apply_fix không cho Hermes gọi trực tiếp: chỉ sinh ra từ kết quả diagnose
 INTERNAL_TOOLS: Dict[str, Tool] = {
     "apply_fix": {"fn": tool_apply_fix, "mutating": True, "args": "", "desc": ""},
+    "apply_agent": {"fn": tool_apply_agent, "mutating": True, "args": "", "desc": ""},
 }
 
 
@@ -524,6 +596,10 @@ def describe_action(name: str, args: Dict[str, Any]) -> str:
         return f"Rollback {app}{comp} về " + (f"revision {rev}" if rev else "phiên bản liền trước")
     if name == "redeploy_app":
         return f"Build lại {app}{comp} từ nhánh {args.get('branch') or 'main'}"
+    if name == "apply_agent":
+        files = args.get("paths") or []
+        listed = ", ".join(files[:6]) + (f" và {len(files) - 6} file khác" if len(files) > 6 else "")
+        return f"Áp dụng {len(files)} file AI Debug đã sửa cho {app}: {listed} (ghi mã, apply K3s, build lại nếu sửa code)"
     if name == "apply_fix":
         action = args.get("action") or {}
         kind = action.get("action_type", "")

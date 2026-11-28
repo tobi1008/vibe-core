@@ -57,6 +57,7 @@ def env(tmp_path, monkeypatch, paths):
     hermes_butler._approvals.clear()
     bot = hermes_butler.Butler()
     bot.executor = SyncExecutor()
+    bot.watchers = SyncExecutor()
     return {"sent": sent, "bot": bot, "tmp": tmp_path}
 
 
@@ -924,3 +925,98 @@ def test_domains_fall_back_to_ingress_hosts(monkeypatch):
     monkeypatch.setattr(hermes_tools.subprocess, "run",
                         lambda cmd, **k: sp.CompletedProcess(cmd, 0, stdout=__import__("json").dumps(ingresses), stderr=""))
     assert hermes_tools.app_domains("shop") == ["shop.example.com"]
+
+
+# ─────────────────────────── AI Debug chế độ Agent qua Telegram ───────────────────────────
+
+DONE_SESSION = {
+    "id": "a1b2c3d4e5f60718", "app": "shop", "status": "done", "engine": "hydrogen", "user_id": "u-alice",
+    "reply": "Đã sửa PORT trong [server.ts](file:///home/vibe-ai/jobs/x/project/server.ts) và thêm probe.",
+    "changes": [
+        {"path": "server.ts", "status": "modified", "kind": "code", "diff": "-a\n+b"},
+        {"path": "k8s/deployment.yaml", "status": "modified", "kind": "k8s", "diff": "+probe"},
+        {"path": "k8s/evil.yaml", "status": "added", "kind": "k8s", "diff": "+hostPath", "blocked": "Không cho phép hostPath."},
+    ],
+}
+
+
+@pytest.fixture
+def agent_env(env, monkeypatch):
+    import ai_agent_session
+    started, applied = [], []
+
+    def fake_start(user_id, args):
+        app = hermes_tools.check_access(user_id, args.get("app"))
+        started.append({**args, "app": app, "engine": hermes_tools.normalize_agent_engine(args.get("engine"))})
+        return {"id": DONE_SESSION["id"], "app": app, "engine": started[-1]["engine"]}
+    monkeypatch.setattr(hermes_tools, "start_ai_debug", fake_start)
+    monkeypatch.setattr(ai_agent_session, "load_session", lambda sid: dict(DONE_SESSION))
+    monkeypatch.setattr(ai_agent_session, "apply_session",
+                        lambda sid, app, paths, rebuild, execute: applied.append((sid, app, paths)) or
+                        {"results": [{"path": p, "status": "success"} for p in paths], "rebuild": {"status": "success"}})
+    monkeypatch.setattr(hermes_butler, "AGENT_POLL_SECONDS", 0)
+    return {**env, "started": started, "applied": applied}
+
+
+def test_natural_language_ai_debug_with_hydrogen_then_apply(agent_env):
+    link(111, "u-alice")
+    replies = iter(['{"tool": "ai_debug", "args": {"app": "shop", "engine": "hydrogen", "request": "sửa lỗi port"}}'])
+    result = hermes_butler.run_agent(111, "u-alice", [], "dùng AI Debug với Gemini 4 Hydrogen sửa lỗi port của shop",
+                                     llm=lambda p: next(replies))
+    assert result["agent_session"] == DONE_SESSION["id"] and "Gemini 4 Hydrogen" in result["reply"]
+    assert agent_env["started"][0]["engine"] == "hydrogen"
+
+    agent_env["bot"].watch_agent_session(111, "u-alice", DONE_SESSION["id"])
+    texts = [t for _, t, _ in agent_env["sent"]]
+    result_msg = next(t for t in texts if t.startswith("🧠 Kết quả AI Debug cho shop"))
+    assert "file://" not in result_msg and "server.ts (sửa)" in result_msg and "⛔ Không cho phép hostPath" in result_msg
+    approval = next(a for a in hermes_butler._approvals.values() if a["tool"] == "apply_agent")
+    assert approval["args"]["paths"] == ["server.ts", "k8s/deployment.yaml"]  # file bị chặn không có trong danh sách áp dụng
+
+    agent_env["bot"].handle_callback(callback(111, f"ap:{approval['id']}"))
+    assert agent_env["applied"] == [(DONE_SESSION["id"], "shop", ["server.ts", "k8s/deployment.yaml"])]
+    assert "Đã áp dụng thay đổi AI Debug cho shop" in agent_env["sent"][-1][1]
+
+
+def test_aidebug_command_parses_engine_and_request(agent_env):
+    link(111, "u-alice")
+    agent_env["bot"].handle_message(private_message(111, "/aidebug shop claude trang chủ lỗi 500"))
+    assert agent_env["started"][-1] == {"app": "shop", "engine": "claude", "request": "trang chủ lỗi 500"}
+    agent_env["bot"].handle_message(private_message(111, "/aidebug shop sửa CORS"))
+    assert agent_env["started"][-1]["engine"] == "hydrogen" and agent_env["started"][-1]["request"] == "sửa CORS"
+
+
+def test_aidebug_denied_on_other_users_app(agent_env):
+    link(111, "u-alice")
+    agent_env["bot"].handle_message(private_message(111, "/aidebug blog hydrogen xem lỗi"))
+    assert agent_env["started"] == [] and "không có quyền" in agent_env["sent"][-1][1]
+
+
+def test_diff_button_sends_diffs(agent_env):
+    link(111, "u-alice")
+    agent_env["bot"].handle_callback(callback(111, f"df:{DONE_SESSION['id']}"))
+    texts = [t for _, t, _ in agent_env["sent"]]
+    assert any(t.startswith("📄 server.ts") and "+b" in t for t in texts)
+
+
+def test_agent_engine_names():
+    assert hermes_tools.normalize_agent_engine("Gemini 4 Hydrogen") == "hydrogen"
+    assert hermes_tools.normalize_agent_engine("antigravity") == "agy"
+    assert hermes_tools.normalize_agent_engine("") == "hydrogen"
+    with pytest.raises(hermes_tools.ToolError):
+        hermes_tools.normalize_agent_engine("gpt-9")
+    assert "/aidebug" in hermes_butler.HELP_TEXT and "ai_debug" in hermes_tools.describe_tools()
+
+
+def test_start_ai_debug_wires_real_session(env, monkeypatch, tmp_path):
+    import ai_agent_session
+    import hermes_agent_router
+    monkeypatch.setattr(hermes_agent_router, "resolve_workspace", lambda app, comp="be": str(tmp_path))
+    monkeypatch.setattr(hermes_agent_router, "collect_debug_context", lambda app, comp="be": {"pod_runtime_logs": "x"})
+    calls = []
+    monkeypatch.setattr(ai_agent_session, "start_session",
+                        lambda *a, **k: calls.append(a) or {"id": "f" * 16, "app": a[0], "engine": a[3]})
+    s = hermes_tools.start_ai_debug("u-alice", {"app": "shop", "request": "sửa lỗi", "engine": "Claude Code"})
+    app, comp, request, engine, user_id, workspace = calls[0][:6]
+    assert (app, comp, request, engine, user_id, workspace) == ("shop", "be", "sửa lỗi", "claude", "u-alice", str(tmp_path))
+    assert s["engine"] == "claude"
