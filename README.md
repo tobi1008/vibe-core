@@ -21,7 +21,6 @@ Frontend (Next.js, `vibe.quyenlt.com`) là repo riêng: [tobi1008/vibehosting-FE
 - [CI/CD cho ứng dụng người dùng](#cicd-cho-ứng-dụng-người-dùng)
 - [Cài đặt và vận hành](#cài-đặt-và-vận-hành)
 - [Kiểm thử](#kiểm-thử)
-- [Giới hạn hiện tại và hướng phát triển](#giới-hạn-hiện-tại-và-hướng-phát-triển)
 
 ---
 
@@ -493,16 +492,3 @@ python -m pytest -q
 ```
 
 Bộ kiểm thử (`tests/`) giả lập kubectl, Docker, Git, Telegram và các AI CLI, bao phủ các luồng triển khai, CI/CD, bảo mật đầu vào, phạm vi app, giới hạn gói, NetworkPolicy, hộp cát AI, chế độ Agent, key AI riêng, Hermes Butler/Monitor/Verifier, usage và dọn dẹp.
-
----
-
-## Giới hạn hiện tại và hướng phát triển
-
-| Giới hạn | Hướng cải thiện |
-|---|---|
-| Cấu hình app, phân bổ, liên kết Telegram lưu trong file JSON trên một máy chủ. | Chuyển sang cơ sở dữ liệu để chạy nhiều instance API. |
-| Mật khẩu database của ứng dụng ghi trực tiếp trong manifest. | Lưu bằng Kubernetes Secret. |
-| AI CLI chạy bằng user riêng trên cùng máy chủ backend (vẫn thấy được thông tin hệ thống công khai như dung lượng ổ đĩa). | Chạy AI trong container hoặc máy riêng. |
-| Chưa giới hạn số lượt AI theo gói; Antigravity/Claude Code dùng quota của tài khoản quản trị. | Thêm hạn mức AI vào gói hosting. |
-| Các giá trị hạ tầng (Docker Hub, namespace, đường dẫn) cố định trong mã nguồn. | Đưa toàn bộ vào biến môi trường. |
-| Một cụm, một namespace dùng chung cho mọi người dùng. | Namespace riêng cho từng người dùng cùng ResourceQuota. |
