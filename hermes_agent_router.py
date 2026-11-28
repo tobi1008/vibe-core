@@ -926,3 +926,72 @@ Ingresses: {context.get('k8s_ingresses')}
             "status": "warning",
             "reply": f"⚠️ Trợ lý AI ({ai_engine.upper()}) phản hồi quá lâu hoặc gặp lỗi kết nối ({str(e)}). Vui lòng thử lại hoặc chuyển sang AI Provider khác."
         }
+
+
+# ─────────────────────────── AI Debug chế độ Agent (sửa file trong hộp cát) ───────────────────────────
+
+class AgentStartRequest(BaseModel):
+    app_name: str
+    component: Optional[str] = "be"
+    message: str
+    history: List[ChatMessage] = []
+    ai_provider: Optional[str] = "agy"
+    preferred_model: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+class AgentApplyRequest(BaseModel):
+    app_name: str
+    paths: Optional[List[str]] = None
+    rebuild: bool = True
+
+
+def _agent_execute(app_name: str, action: Dict[str, Any]) -> Dict[str, Any]:
+    return execute_remediation_action(app_name, RemediationAction(**action))
+
+
+@router.post("/agent")
+def start_agent(payload: AgentStartRequest):
+    """Bắt đầu phiên agent (chạy nền); web hỏi lại trạng thái qua GET /agent/{id}"""
+    import ai_agent_session as agent
+    from hermes_tools import app_domains
+    validate_app_name(payload.app_name)
+    component = payload.component if payload.component in ("be", "fe") else "be"
+    workspace = resolve_workspace(payload.app_name, component)
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Không tìm thấy mã nguồn của ứng dụng trên máy chủ.")
+    engine = (payload.ai_provider or "agy").lower()
+    engine = "claude" if engine in ("claude", "claude-code", "anthropic") else engine
+    try:
+        session = agent.start_session(
+            payload.app_name, component, payload.message, engine, payload.user_id, workspace,
+            collect_debug_context(payload.app_name, component),
+            app_domains(app_scope.base_app_name(payload.app_name)),
+            history=[h.model_dump() for h in payload.history], model=payload.preferred_model,
+        )
+    except agent.AgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "success", "session": agent.public_session(session)}
+
+
+@router.get("/agent/{session_id}")
+def get_agent(session_id: str, app_name: str):
+    import ai_agent_session as agent
+    try:
+        session = agent.load_session(session_id)
+    except agent.AgentError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if session["app"] != app_scope.base_app_name(app_name):
+        raise HTTPException(status_code=404, detail="Không tìm thấy phiên agent của ứng dụng này.")
+    return {"status": "success", "session": agent.public_session(session)}
+
+
+@router.post("/agent/{session_id}/apply")
+def apply_agent(session_id: str, payload: AgentApplyRequest):
+    import ai_agent_session as agent
+    validate_app_name(payload.app_name)
+    try:
+        result = agent.apply_session(session_id, payload.app_name, payload.paths, payload.rebuild, _agent_execute)
+    except agent.AgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "success", **result}
