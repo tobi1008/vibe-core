@@ -43,7 +43,8 @@ MAX_DIFF_CHARS = 20000
 MAX_REPLY_CHARS = 12000
 IGNORED_DIRS = {".git", "node_modules", ".next", ".nuxt", "dist", "build", "vendor", "__pycache__", ".venv", "venv",
                 ".cache", "target", ".turbo", ".gradle", ".idea", ".vscode", "coverage"}
-CLI_BINS = {"agy": "/usr/local/bin/agy", "hydrogen": "/usr/local/bin/agy", "claude": "/usr/local/bin/claude"}
+# Gọi theo tên, tìm trong PATH của AGENT_USER (~/.local/bin trước, nơi Claude Code tự cài và tự cập nhật; rồi /usr/local/bin)
+CLI_BINS = {"agy": "agy", "hydrogen": "agy", "claude": "claude"}
 
 _lock = threading.Lock()
 _running: Dict[str, str] = {}  # app -> session id đang chạy
