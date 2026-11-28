@@ -131,7 +131,8 @@ def no_real_docker_login(tmp_path, monkeypatch):
     monkeypatch.setattr(builder_core, "DOCKER_PASSWORD", None)
     monkeypatch.setenv("DOCKER_JANITOR", "0")  # không chạy docker prune thật
     monkeypatch.setenv("NAMESPACE_LIMIT_RANGE", "0")  # không apply LimitRange thật
-    monkeypatch.setenv("NODE_IMAGE_CLEANUP", "0")  # không tạo Job xóa image trên node thật
+    monkeypatch.setenv("NODE_IMAGE_CLEANUP", "0")
+    monkeypatch.setenv("NETWORK_POLICY", "0")  # không apply NetworkPolicy thật  # không tạo Job xóa image trên node thật
 
 
 @pytest.fixture(autouse=True)

@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 import ai_credentials
 import ai_sandbox
 import byo_ai
+import network_policy
 import node_image_cleanup
 import package_limits
 from security import redact_secrets, safe_join
@@ -528,6 +529,9 @@ def run_cmd(cmd, app_name, cwd=None):
         target = package_limits.apply_target(cmd, cwd)
         if target and package_limits.enforce_file(app_name, target):
             write_log(app_name, f"📦 [GÓI HOSTING] Áp giới hạn tài nguyên của gói vào {os.path.basename(target)}")
+        # Cô lập mạng: policy cho phép các thành phần của chính app gọi nhau phải có TRƯỚC khi Pod chạy
+        if target and not network_policy.ensure_app(app_name, K8S_NAMESPACE) and network_policy.enabled():
+            write_log(app_name, "⚠️ [MẠNG] Không tạo được NetworkPolicy cho app, thành phần của app có thể không gọi được nhau.")
         write_log(app_name, f"> Chạy lệnh: {' '.join(cmd)}")
         result = subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, text=True)
         if result.stdout:
@@ -926,6 +930,11 @@ def delete_app(app_name: str):
 
     write_log(app_name, f"[3] Đang gọi API Docker Hub để xóa kho chứa...")
     delete_dockerhub_repos(app_name, repos)
+
+    try:
+        network_policy.delete_app(app_name, K8S_NAMESPACE)
+    except Exception as e:
+        write_log(app_name, f"⚠️ Không xóa được NetworkPolicy của app (bỏ qua): {e}")
 
     write_log(app_name, f"[4] Đang xóa image của app trên các node K3s...")
     node_image_cleanup.cleanup_app_images(app_name, repos, DOCKER_USER, K8S_NAMESPACE, write_log)

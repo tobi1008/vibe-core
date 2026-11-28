@@ -91,6 +91,7 @@
 | [package_limits.py](package_limits.py) | Giới hạn tài nguyên theo gói hosting: ghi đè CPU/RAM/dung lượng DB vào mọi manifest trước khi apply, chặn luồng có database khi gói không cho phép. |
 | [usage.py](usage.py) | Đo CPU/RAM (kubelet), dung lượng database thật (`du` trong Pod) và ổ tạm của từng app cho trang Usage. |
 | [docker_janitor.py](docker_janitor.py) | Tự dọn build cache và image Docker cũ trên máy build sau mỗi pipeline. |
+| [network_policy.py](network_policy.py) | Cô lập mạng giữa các app bằng NetworkPolicy: chặn mặc định, chỉ cho Traefik/kubelet và các thành phần của cùng app gọi vào. |
 | [node_image_cleanup.py](node_image_cleanup.py) | Khi xóa app, tạo Job ngắn trên mỗi node K3s để xóa image của app đó bằng crictl có sẵn của K3s. |
 | [dockerhub_cleanup.py](dockerhub_cleanup.py) | Dọn rác Docker Hub: tìm repo mồ côi và tag cũ, xem trước rồi mới xóa. |
 | [hermes_agent_router.py](hermes_agent_router.py) | Router `/api/ai-debug`: chẩn đoán lỗi bằng AI, thực thi hành động khắc phục, chat với AI. |
@@ -258,6 +259,7 @@ Key lưu ở `/opt/vibe-hosting/ai_credentials.json` (mode 600), mã hóa Fernet
 
 - **AI CLI** (Antigravity, Claude Code) là agent có công cụ, chạy trong thư mục mã nguồn của user. `ai_sandbox.py` bỏ mọi biến môi trường bí mật của Vibe Core (VIBE_API_KEY, DOCKER_PASSWORD, token, secret...) và trỏ `KUBECONFIG` về `/dev/null`. Đặt `AI_CLI_USER=vibe-ai` để chạy CLI bằng user không đặc quyền qua `sudo -n -u vibe-ai` (không đọc được kubeconfig, `.env`, workspace của app khác; chỉ được cấp quyền đọc mã nguồn của đúng app bằng `setfacl`). Chuẩn bị trên máy chủ: `useradd -m vibe-ai`, đăng nhập `agy`/`claude` bằng user này, thêm `/etc/sudoers.d/vibe-ai` với `root ALL=(vibe-ai) NOPASSWD: ALL`.
 - **Key AI riêng** chỉ là lời gọi HTTP, model không có công cụ chạy trên máy chủ.
+- **Cô lập mạng** (`network_policy.py`): namespace có `vibe-default-deny-ingress` (chặn mọi kết nối vào Pod), `vibe-allow-ingress-controller` (cho Traefik và health probe của kubelet từ cổng cni0 của node) và `vibe-app-<app>` cho mỗi app (các thành phần của cùng app gọi nhau: frontend → backend → database). App A không kết nối được database hay service nội bộ của app B, chỉ gọi được qua tên miền công khai; chiều ra (Internet, DNS) không bị chặn. Policy của app được tạo ngay trước `kubectl apply` đầu tiên và lúc API khởi động (policy từng app trước, chặn mặc định sau); xóa app thì xóa policy. Hermes không sửa được NetworkPolicy. `NETWORK_POLICY=0` để tắt.
 - **Hermes** (web và Telegram): mọi thao tác giới hạn trong tài nguyên của đúng app (`app_scope.py`) và trong gói hosting (`package_limits.py`). Telegram có `/goi` cho người dùng xem gói, giới hạn, AI đang dùng và danh sách việc Hermes được/không được làm.
 
 ### Dọn rác Docker Hub
@@ -396,6 +398,7 @@ Tạo file `.env` trong thư mục gốc của dự án. File này đã nằm tr
 | `DOCKERHUB_GRACE_HOURS` | Không | Bỏ qua repo / tag vừa cập nhật trong số giờ này (pipeline có thể đang push). Mặc định `1`. |
 | `AI_KEYS_SECRET` | Khuyến nghị | Khóa mã hóa API key AI của user. Bỏ trống thì dẫn xuất từ `VIBE_API_KEY`. |
 | `AI_CLI_USER` | Khuyến nghị | User hệ thống không đặc quyền để chạy AI CLI (vd `vibe-ai`). Bỏ trống thì CLI chạy bằng user của API (chỉ lọc biến môi trường). |
+| `NETWORK_POLICY` | Không | Đặt `0` để không tạo NetworkPolicy cô lập mạng giữa các app. |
 | `DOCKER_JANITOR` | Không | Đặt `0` để tắt tự dọn Docker sau mỗi lần build. |
 | `DOCKER_BUILD_CACHE_MAX` | Không | Dung lượng build cache tối đa giữ lại. Mặc định `5gb`. |
 | `NODE_IMAGE_CLEANUP` | Không | Đặt `0` để không xóa image trên node K3s khi xóa app. |

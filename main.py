@@ -56,6 +56,16 @@ except Exception as e:
 _janitor_stop = threading.Event()
 
 
+def _ensure_network_policies() -> None:
+    import network_policy
+    try:
+        apps = list(json.load(open(CONFIG_DB_FILE, encoding="utf-8")).keys()) if os.path.exists(CONFIG_DB_FILE) else []
+        result = network_policy.ensure_all(apps, K8S_NAMESPACE)
+        builder_core.write_log("system", f"🔒 [MẠNG] NetworkPolicy: {result}")
+    except Exception as e:
+        builder_core.write_log("system", f"⚠️ [MẠNG] Không áp được NetworkPolicy: {e}")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # Bot và giám sát chỉ chạy khi máy chủ có TELEGRAM_BOT_TOKEN
@@ -66,6 +76,8 @@ async def lifespan(_app: FastAPI):
     # Lưới an toàn: container không khai báo limits vẫn bị giới hạn (chạy nền, không chặn khởi động)
     if os.getenv("NAMESPACE_LIMIT_RANGE", "1") != "0":
         threading.Thread(target=package_limits.ensure_limit_range, args=(K8S_NAMESPACE,), daemon=True).start()
+    # Cô lập mạng giữa các app: policy cho từng app trước, rồi mới bật chặn mặc định
+    threading.Thread(target=_ensure_network_policies, daemon=True).start()
     yield
     _janitor_stop.set()
     if telegram_api:
