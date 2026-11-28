@@ -9,6 +9,8 @@ import time
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
+import ai_credentials
+import byo_ai
 import node_image_cleanup
 import package_limits
 from security import redact_secrets, safe_join
@@ -61,10 +63,39 @@ CONFIG_AI_ENGINES = ("agy", "claude")
 
 
 def normalize_config_engine(provider: Optional[str]) -> str:
-    p = (provider or "agy").lower().strip()
+    p = (provider or "agy").strip()
+    if ai_credentials.is_byo(p):
+        return p  # "byo:<id>": key AI riêng của user (kiểm tra chủ sở hữu khi dùng)
+    p = p.lower()
     if p in ["claude", "claude-code", "anthropic"]:
         return "claude"
     return "agy"
+
+
+def run_byo_prompt(prompt: str, engine: str, app_name: str, owner_user_id: Optional[str], timeout: int) -> str:
+    owner = owner_user_id or ai_credentials.app_owner(app_name)
+    try:
+        cred = ai_credentials.resolve(engine, owner)
+    except ai_credentials.CredentialError as e:
+        raise Exception(str(e))
+    write_log(app_name, f"🔑 [AI] Dùng key riêng của user: {ai_credentials.display_name(cred)}")
+    try:
+        return byo_ai.complete(cred, prompt, timeout=timeout)
+    except byo_ai.ByoAIError as e:
+        raise Exception(str(e))
+
+
+def parse_ai_json(raw_output: str) -> dict:
+    """Bóc khối JSON trong câu trả lời của model (có thể nằm trong ```json ... ```)"""
+    clean_text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', raw_output or "")
+    md_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', clean_text, re.DOTALL)
+    if md_match:
+        clean_json = md_match.group(1).strip()
+    else:
+        start_idx, end_idx = clean_text.find('{'), clean_text.rfind('}')
+        clean_json = clean_text[start_idx:end_idx + 1] if 0 <= start_idx < end_idx else clean_text.strip()
+    clean_json = re.sub(r'\\(?![/"\\bfnrtu])', r'\\\\', clean_json)
+    return json.loads(clean_json)
 
 
 def get_agy_bin() -> str:
@@ -411,14 +442,18 @@ def call_ai_json(
     cwd: Optional[str] = None,
     timeout: Optional[int] = None,
     preferred_model: Optional[str] = None,
-    ai_provider: str = "agy"
+    ai_provider: str = "agy",
+    owner_user_id: Optional[str] = None
 ) -> dict:
     """
     Bộ điều phối AI Engine hợp nhất:
     - 'agy': Google Antigravity CLI (Gemini Flash)
     - 'claude': Anthropic Claude Code CLI (Opus 5.5 / Sonnet 5.5 / Haiku 5.5)
     - 'hermes': Hermes SRE Agent (Open-source LLMs qua API Gateway)
+    - 'byo:<id>': API key riêng của user (OpenAI / Anthropic / Gemini / OpenAI-compatible)
     """
+    if ai_credentials.is_byo(ai_provider):
+        return parse_ai_json(run_byo_prompt(prompt, ai_provider, app_name, owner_user_id, timeout or 120))
     provider = (ai_provider or "agy").lower().strip()
     if provider in ["claude", "claude-code", "anthropic"]:
         to = timeout or 90
@@ -436,14 +471,18 @@ def call_ai_prompt(
     cwd: Optional[str] = None,
     timeout: Optional[int] = None,
     preferred_model: Optional[str] = None,
-    ai_provider: str = "agy"
+    ai_provider: str = "agy",
+    owner_user_id: Optional[str] = None
 ) -> str:
     """
     Bộ điều phối AI dạng Text/Chat tự do:
     - 'agy': Google Antigravity CLI
     - 'claude': Anthropic Claude Code CLI
     - 'hermes': Hermes SRE Agent
+    - 'byo:<id>': API key riêng của user
     """
+    if ai_credentials.is_byo(ai_provider):
+        return run_byo_prompt(prompt, ai_provider, app_name, owner_user_id, timeout or 120)
     provider = (ai_provider or "agy").lower().strip()
     if provider in ["claude", "claude-code", "anthropic"]:
         to = timeout or 90

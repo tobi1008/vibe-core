@@ -23,6 +23,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
+import ai_credentials
 import app_scope
 import builder_core
 import cicd_core
@@ -355,7 +356,9 @@ def diagnose(user_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
     app = check_access(user_id, args.get("app"))
     component = _component(args) or "be"
     context = collect_debug_context(app, component)
-    result = query_hermes_diagnostics(context, user_note=args.get("note"), ai_provider="hermes")
+    # Dùng key AI mặc định của user nếu có, không thì model của hệ thống
+    engine = ai_credentials.default_engine(user_id) or "hermes"
+    result = query_hermes_diagnostics(context, user_note=args.get("note"), ai_provider=engine, owner_user_id=user_id)
     result["app"] = app
     return result
 

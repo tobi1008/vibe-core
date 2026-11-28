@@ -18,6 +18,7 @@ from hermes_verifier import verify_deployment, discover_workloads, load_report, 
 import builder_core
 import docker_janitor
 import package_limits
+import ai_credentials
 import app_scope
 import dockerhub_cleanup
 from fastapi.responses import JSONResponse
@@ -111,6 +112,10 @@ if hermes_agent_router:
 # Hermes Butler: API liên kết Telegram (bot và giám sát được khởi động trong lifespan)
 if telegram_api:
     app.include_router(telegram_api.router)
+
+# Key AI riêng của user (OpenAI / Anthropic / Gemini / OpenAI-compatible)
+from ai_credentials_api import router as ai_credentials_router  # noqa: E402
+app.include_router(ai_credentials_router)
 
 @app.get("/api/ai-providers")
 def get_ai_providers():
@@ -283,6 +288,7 @@ async def trigger_deploy(req: DeployRequest, background_tasks: BackgroundTasks):
     final_url = prepare_repo_url(req.repo_url, req.github_token)
     owner = resolve_github_owner_from_token(req.github_token)
     ai_engine = normalize_config_engine(req.ai_provider)
+    require_ai_engine_owner(req.app_name, ai_engine)
 
     with open(f"{LOG_DIR}/{req.app_name}.log", "w", encoding="utf-8") as f:
         f.write(f"🚀 [INIT] Bắt đầu quy trình Deploy Web: {req.app_name} ({req.app_domain}) - AI: {ai_engine.upper()}...\n")
@@ -318,6 +324,7 @@ async def trigger_deploy_open_source(req: OpenSourceDeployRequest, background_ta
 
     owner = resolve_github_owner_from_token(req.github_token)
     ai_engine = normalize_config_engine(req.ai_provider)
+    require_ai_engine_owner(req.app_name, ai_engine)
     db_type = (req.db_type or "mysql").lower().strip()
 
     with open(f"{LOG_DIR}/{req.app_name}.log", "w", encoding="utf-8") as f:
@@ -369,6 +376,7 @@ async def trigger_deploy_db(
     final_url = prepare_repo_url(repo_url, github_token)
     owner = resolve_github_owner_from_token(github_token)
     ai_engine = normalize_config_engine(ai_provider)
+    require_ai_engine_owner(app_name, ai_engine)
     saved_backup_path = ""
     if backup_file and backup_file.filename:
         safe_filename = safe_upload_filename(backup_file.filename)
@@ -409,6 +417,7 @@ async def trigger_deploy_archive(
     safe_filename = safe_upload_filename(archive_file.filename)
     saved_archive_path = f"{UPLOAD_DIR}/{app_name}_{safe_filename}"
     ai_engine = normalize_config_engine(ai_provider)
+    require_ai_engine_owner(app_name, ai_engine)
     try:
         with open(saved_archive_path, "wb") as buffer:
             shutil.copyfileobj(archive_file.file, buffer)
@@ -451,6 +460,7 @@ async def trigger_deploy_archive_with_db(
     safe_filename = safe_upload_filename(archive_file.filename)
     saved_archive_path = f"{UPLOAD_DIR}/{app_name}_{safe_filename}"
     ai_engine = normalize_config_engine(ai_provider)
+    require_ai_engine_owner(app_name, ai_engine)
     try:
         with open(saved_archive_path, "wb") as buffer:
             shutil.copyfileobj(archive_file.file, buffer)
@@ -518,6 +528,7 @@ async def trigger_deploy_fullstack(
     final_fe_url = prepare_repo_url(fe_repo_url, github_token)
     owner = resolve_github_owner_from_token(github_token)
     ai_engine = normalize_config_engine(ai_provider)
+    require_ai_engine_owner(app_name, ai_engine)
 
     saved_backup_path = ""
     if backup_file and backup_file.filename:
@@ -567,6 +578,7 @@ async def trigger_deploy_monorepo(req: MonorepoDeployRequest, background_tasks: 
     owner = resolve_github_owner_from_token(req.github_token)
 
     ai_engine = normalize_config_engine(req.ai_provider)
+    require_ai_engine_owner(req.app_name, ai_engine)
     with open(f"{LOG_DIR}/{req.app_name}.log", "w", encoding="utf-8") as f:
         f.write(f"🚀 [INIT] Tiếp nhận Monorepo Open Source: {req.app_name} (AI: {ai_engine.upper()})\n"
                 f"   - Repository : {req.repo_url}\n"
@@ -667,6 +679,7 @@ def purge_app_workspace_and_configs(app_name: str):
     # Giới hạn tài nguyên theo gói hosting của app
     try:
         package_limits.forget(app_name)
+        ai_credentials.forget_app(app_name)
     except Exception:
         pass
 
@@ -749,6 +762,31 @@ async def update_config(app_name: str, req: AppConfigUpdate):
         raise HTTPException(status_code=404, detail=f"Không có ứng dụng {app_name} trên Vibe Core.")
     save_app_config(app_name, {"auto_cicd": req.auto_cicd})
     return {"status": "success", "message": f"Đã {'bật' if req.auto_cicd else 'tắt'} Auto CI/CD cho {app_name}"}
+
+class AppOwner(BaseModel):
+    user_id: str
+
+
+@app.post("/api/apps/{app_name}/owner")
+async def register_owner(app_name: str, req: AppOwner):
+    """Frontend đăng ký chủ app trước mỗi lần triển khai: key AI riêng (byo:<id>) chỉ dùng được cho app
+    khi key thuộc đúng chủ này. Không lấy user_id từ trình duyệt"""
+    validate_app_name(app_name)
+    if not req.user_id.strip():
+        raise HTTPException(status_code=400, detail="Thiếu user_id.")
+    ai_credentials.register_app_owner(app_name, req.user_id.strip())
+    return {"status": "success"}
+
+
+def require_ai_engine_owner(app_name: str, ai_engine: str) -> None:
+    """Engine "byo:<id>" chỉ hợp lệ khi key thuộc chủ app đã đăng ký"""
+    if not ai_credentials.is_byo(ai_engine):
+        return
+    try:
+        ai_credentials.resolve(ai_engine, ai_credentials.app_owner(app_name))
+    except ai_credentials.CredentialError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
 
 class AppResources(BaseModel):
     cpu: str

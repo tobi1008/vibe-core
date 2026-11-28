@@ -85,6 +85,8 @@
 | [archive_builder_core.py](archive_builder_core.py) | Triển khai từ file nén; giải nén an toàn (chống Zip Slip / path traversal). |
 | [cicd_core.py](cicd_core.py) | CI/CD: cập nhật mã nguồn, build image theo phiên bản, rolling update trên K3s. |
 | [file_manager_api.py](file_manager_api.py) | Router `/api/project`: duyệt, đọc, ghi file trong workspace; push lên GitHub của người dùng. |
+| [ai_credentials.py](ai_credentials.py), [ai_credentials_api.py](ai_credentials_api.py) | Key AI riêng của user (OpenAI, Anthropic, Gemini, OpenAI-compatible): lưu mã hóa, chỉ dùng được cho app của chính chủ key. |
+| [byo_ai.py](byo_ai.py) | Gọi model bằng key của user qua HTTP; model không có công cụ chạy trên máy chủ. |
 | [package_limits.py](package_limits.py) | Giới hạn tài nguyên theo gói hosting: ghi đè CPU/RAM/dung lượng DB vào mọi manifest trước khi apply, chặn luồng có database khi gói không cho phép. |
 | [docker_janitor.py](docker_janitor.py) | Tự dọn build cache và image Docker cũ trên máy build sau mỗi pipeline. |
 | [node_image_cleanup.py](node_image_cleanup.py) | Khi xóa app, tạo Job ngắn trên mỗi node K3s để xóa image của app đó bằng crictl có sẵn của K3s. |
@@ -231,6 +233,18 @@ curl -H "X-API-Key: $VIBE_API_KEY" http://localhost:8080/api/logs/my-app
 
 Trước mỗi `kubectl apply -f` (trong `builder_core.run_cmd`), limits/requests của mọi container trong Deployment/StatefulSet bị ghi đè theo gói (requests = 1/4 limits), PVC mới nhận dung lượng của gói (PVC đã có giữ nguyên vì local-path không đổi được kích thước). Manifest do AI sinh hay Hermes đề xuất đều không vượt được gói; Hermes đề xuất manifest vượt gói thì bị từ chối. Gói không có database thì các luồng deploy-with-db, archive-with-db, fullstack, monorepo có DB và CMS trả 403. Khi API khởi động, `LimitRange` `vibe-default-limits` được apply cho namespace làm lưới an toàn (`NAMESPACE_DEFAULT_CPU`/`NAMESPACE_DEFAULT_MEMORY`, mặc định `1000m`/`1Gi`; `NAMESPACE_LIMIT_RANGE=0` để tắt).
 
+### Key AI riêng của user (prefix `/api/ai-credentials`)
+
+| Method | Endpoint | Mô tả |
+|---|---|---|
+| GET | `/api/ai-credentials?user_id=` | Danh sách key của user (chỉ 4 ký tự cuối) và các hãng hỗ trợ |
+| PUT | `/api/ai-credentials` | Thêm/sửa: `{user_id, id?, provider, model, api_key?, base_url?, label?, is_default}`. Gọi thử model trước, lỗi thì không lưu |
+| POST | `/api/ai-credentials/{id}/test`, `/{id}/default` | Gọi thử / đặt làm mặc định (`{user_id}`) |
+| DELETE | `/api/ai-credentials/{id}?user_id=` | Xóa |
+| POST | `/api/apps/{app}/owner` | Frontend đăng ký chủ app trước mỗi lần triển khai |
+
+Key lưu ở `/opt/vibe-hosting/ai_credentials.json` (mode 600), mã hóa Fernet bằng `AI_KEYS_SECRET` (không đặt thì dẫn xuất từ `VIBE_API_KEY`; đổi khóa thì user phải nhập lại key). Chọn engine `byo:<id>` khi triển khai hay AI debug: Vibe Core chỉ chấp nhận nếu key thuộc chủ app đã đăng ký (không nhận user_id từ trình duyệt), CI/CD dùng lại đúng key đó. Hermes trên Telegram và nút chẩn đoán dùng key mặc định của user nếu có, không thì dùng model của hệ thống; Hermes Verifier luôn dùng model hệ thống. Model gọi qua key riêng chỉ nhận prompt và trả văn bản, không chạy được lệnh trên máy chủ.
+
 ### Dọn rác Docker Hub
 
 | Method | Endpoint | Mô tả |
@@ -365,6 +379,7 @@ Tạo file `.env` trong thư mục gốc của dự án. File này đã nằm tr
 | `DOCKERHUB_PROTECTED_REPOS` | Khuyến nghị | Các repo Docker Hub không do Vibe Hosting tạo, cách nhau bởi dấu phẩy (vd `my-blog,vibe-core`). Công cụ dọn rác không bao giờ đụng tới. |
 | `DOCKERHUB_KEEP_TAGS` | Không | Số tag mới nhất luôn giữ lại trong mỗi repo khi dọn rác. Mặc định `3`. |
 | `DOCKERHUB_GRACE_HOURS` | Không | Bỏ qua repo / tag vừa cập nhật trong số giờ này (pipeline có thể đang push). Mặc định `1`. |
+| `AI_KEYS_SECRET` | Khuyến nghị | Khóa mã hóa API key AI của user. Bỏ trống thì dẫn xuất từ `VIBE_API_KEY`. |
 | `DOCKER_JANITOR` | Không | Đặt `0` để tắt tự dọn Docker sau mỗi lần build. |
 | `DOCKER_BUILD_CACHE_MAX` | Không | Dung lượng build cache tối đa giữ lại. Mặc định `5gb`. |
 | `NODE_IMAGE_CLEANUP` | Không | Đặt `0` để không xóa image trên node K3s khi xóa app. |

@@ -21,6 +21,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import ai_credentials
 import builder_core
 import hermes_tools
 import telegram_client as tg
@@ -114,6 +115,19 @@ def call_llm(prompt: str) -> str:
     return builder_core.run_hermes_prompt(prompt, app_name=LOG_NAME, timeout=LLM_TIMEOUT, max_models=3)
 
 
+def user_engine(user_id: str) -> Optional[str]:
+    """Key AI mặc định của user ("byo:<id>"); None thì Hermes dùng model của hệ thống"""
+    return ai_credentials.default_engine(user_id)
+
+
+def llm_for(user_id: str) -> Callable[[str], str]:
+    engine = user_engine(user_id)
+    if not engine:
+        return call_llm
+    return lambda prompt: builder_core.call_ai_prompt(prompt, app_name=LOG_NAME, timeout=LLM_TIMEOUT,
+                                                      ai_provider=engine, owner_user_id=user_id)
+
+
 def parse_decision(raw: str) -> Dict[str, Any]:
     """Tách JSON quyết định từ câu trả lời của LLM; không phải JSON thì coi như câu trả lời thường"""
     text = (raw or "").strip()
@@ -164,7 +178,7 @@ def format_diagnosis(result: Dict[str, Any]) -> str:
 def run_agent(chat_id: int, user_id: str, history: List[Dict[str, str]], message: str,
               llm: Callable[[str], str] = None) -> Dict[str, Any]:
     """Chạy một lượt hội thoại. Trả về {"reply": str, "approvals": [...]}; không gửi gì ra Telegram"""
-    llm = llm or call_llm
+    llm = llm or llm_for(user_id)
     steps: List[str] = []
     approvals: List[Dict[str, Any]] = []
     for _ in range(MAX_STEPS):
@@ -172,7 +186,8 @@ def run_agent(chat_id: int, user_id: str, history: List[Dict[str, str]], message
             decision = parse_decision(llm(build_prompt(user_id, history, message, steps)))
         except Exception as e:
             builder_core.write_log(LOG_NAME, f"⚠️ Hermes LLM lỗi: {e}")
-            return {"reply": "⚠️ Hermes LLM đang không phản hồi (đã thử 3 model). Bạn thử lại sau ít phút nhé.",
+            own = " (key AI riêng của bạn – kiểm tra key/model ở trang hồ sơ)" if user_engine(user_id) else " (đã thử 3 model)"
+            return {"reply": f"⚠️ Hermes LLM đang không phản hồi{own}. Bạn thử lại sau ít phút nhé.",
                     "approvals": approvals}
 
         tool_name = decision.get("tool")

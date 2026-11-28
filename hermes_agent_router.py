@@ -54,6 +54,7 @@ class AIDebugRequest(BaseModel):
     ai_provider: Optional[str] = "agy"
     github_token: Optional[str] = None
     auto_push: Optional[bool] = True
+    user_id: Optional[str] = None  # người yêu cầu (frontend gửi), để dùng đúng key AI riêng của họ
 
 class ExecuteActionsPayload(BaseModel):
     actions: List[RemediationAction]
@@ -72,7 +73,8 @@ class AIChatRequest(BaseModel):
     history: List[ChatMessage] = []
     preferred_model: Optional[str] = None
     ai_provider: Optional[str] = "agy"
-    
+    user_id: Optional[str] = None  # người yêu cầu (frontend gửi), để dùng đúng key AI riêng của họ
+
 def detect_action_component(action: RemediationAction, default_comp: str = "be") -> str:
     """Tự động nhận diện chính xác component (fe hoặc be) từ target hoặc file path"""
     raw_target = (action.target or "").lower().strip()
@@ -378,7 +380,7 @@ def collect_debug_context(app_name: str, component: str = "be") -> Dict[str, Any
     return context
 
 
-def query_hermes_diagnostics(context: Dict[str, Any], preferred_model: Optional[str] = None, user_note: Optional[str] = None, ai_provider: str = "agy") -> Dict[str, Any]:
+def query_hermes_diagnostics(context: Dict[str, Any], preferred_model: Optional[str] = None, user_note: Optional[str] = None, ai_provider: str = "agy", owner_user_id: Optional[str] = None) -> Dict[str, Any]:
     system_instruction = """
 Bạn là Hermes Agent - Kỹ sư trưởng AI SRE & Kubernetes Specialist của nền tảng Vibe Hosting (K3s, Docker, Nixpacks, Node.js, Spring Boot, Python, PostgreSQL/MySQL).
 
@@ -455,7 +457,8 @@ Services:
             app_name=context.get("app_name", "system"),
             preferred_model=preferred_model,
             timeout=45,
-            ai_provider=ai_provider
+            ai_provider=ai_provider,
+            owner_user_id=owner_user_id
         )
     except Exception as e:
         write_log(context.get("app_name", "system"), f"⚠️ [AI DIAGNOSE WARNING] AI ({ai_provider.upper()}) phân tích thất bại: {e}")
@@ -770,7 +773,8 @@ def push_healed_workspace_to_git(app_name: str, component: str, token: str) -> D
 def analyze_app_issues(payload: AIDebugRequest):
     validate_app_name(payload.app_name)
     context = collect_debug_context(payload.app_name, payload.component or "be")
-    ai_result = query_hermes_diagnostics(context, payload.preferred_model, payload.user_note, ai_provider=payload.ai_provider or "agy")
+    ai_result = query_hermes_diagnostics(context, payload.preferred_model, payload.user_note,
+                                         ai_provider=payload.ai_provider or "agy", owner_user_id=payload.user_id)
 
     execution_results = []
     git_push_result = None
@@ -908,7 +912,8 @@ Ingresses: {context.get('k8s_ingresses')}
             app_name=payload.app_name,
             preferred_model=payload.preferred_model,
             timeout=45,
-            ai_provider=ai_engine
+            ai_provider=ai_engine,
+            owner_user_id=payload.user_id
         )
         return {
             "status": "success",
