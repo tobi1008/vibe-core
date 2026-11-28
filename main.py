@@ -137,7 +137,7 @@ def get_ai_providers():
     - providers: engine viết cấu hình Nixpacks / K3s (Antigravity, Claude Code)
     - verifier : Hermes Agent kiểm tra tổng thể ở bước cuối pipeline
     """
-    from builder_core import AGY_MODELS, HERMES_MODELS, CLAUDE_MODELS
+    from builder_core import AGY_MODELS, HERMES_MODELS, CLAUDE_MODELS, HYDROGEN_MODELS
     return {
         "status": "success",
         "default": "agy",
@@ -148,6 +148,13 @@ def get_ai_providers():
                 "badge": "Khuyên dùng - Nhanh (5-15s)",
                 "description": "Viết cấu hình Nixpacks & K3s bằng CLI trực tiếp trên VPS, tự động dự phòng 3 tầng Gemini 3.8 Flash (Low / Medium / High)",
                 "models": AGY_MODELS
+            },
+            {
+                "id": "hydrogen",
+                "name": "Gemini 4 Hydrogen (Antigravity)",
+                "badge": "Model mới - Mạnh",
+                "description": "Dùng Gemini 4 Hydrogen qua Antigravity CLI trên VPS (Medium, dự phòng High/Low, rồi Gemini 3.8 Flash)",
+                "models": HYDROGEN_MODELS
             },
             {
                 "id": "claude",

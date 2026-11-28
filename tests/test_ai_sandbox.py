@@ -1,3 +1,4 @@
+import os
 import subprocess
 
 import pytest
@@ -26,12 +27,9 @@ def test_wrap_without_user_is_unchanged(monkeypatch):
 def test_wrap_with_user_uses_sudo_and_clean_env(monkeypatch, tmp_path):
     monkeypatch.setenv("AI_CLI_USER", "vibe-ai")
     monkeypatch.setattr(ai_sandbox.pwd, "getpwnam", lambda u: type("P", (), {"pw_dir": "/home/vibe-ai"})())
-    granted = []
-    monkeypatch.setattr(ai_sandbox, "_grant_read", lambda path, user: granted.append((path, user)))
     cmd = ai_sandbox.wrap(["/root/.local/bin/agy", "-p", "x"], {"LANG": "C"}, str(tmp_path))
     assert cmd[:6] == ["sudo", "-n", "-u", "vibe-ai", "--", "env"]
     assert "HOME=/home/vibe-ai" in cmd and cmd[-3:] == ["agy", "-p", "x"]
-    assert granted == [(str(tmp_path), "vibe-ai")]
 
 
 def test_missing_cli_user_fails_loudly(monkeypatch):
@@ -69,7 +67,7 @@ def test_goi_shows_package_ai_and_permissions(monkeypatch, paths, tmp_path):
 
 def test_agy_and_claude_run_without_tools(monkeypatch, paths):
     """AI CLI không được chạy lệnh / đọc file trên máy chủ: lỗ hổng cũ là --dangerously-skip-permissions"""
-    monkeypatch.delenv("AI_CLI_USER", raising=False)
+    monkeypatch.setenv("AI_CLI_USER", "0")  # không có user riêng: chạy bằng root nên phải chặn hết công cụ
     cmds = []
     monkeypatch.setattr(ai_sandbox.subprocess, "run", lambda cmd, **k: cmds.append(cmd) or
                         subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr=""))
@@ -80,4 +78,29 @@ def test_agy_and_claude_run_without_tools(monkeypatch, paths):
     assert "--dangerously-skip-permissions" not in claude and claude[-2:] == ["--tools", ""]
     for cmd in (agy, claude):
         prompt = cmd[cmd.index("-p") + 1]
-        assert prompt.startswith("[Giới hạn] Bạn KHÔNG có công cụ") and prompt.endswith("kiểm tra dung lượng VPS")
+        assert prompt.startswith("[Giới hạn] Bạn không được truy cập máy chủ") and prompt.endswith("kiểm tra dung lượng VPS")
+
+
+def test_cli_runs_as_vibe_ai_in_empty_dir_when_available(monkeypatch, tmp_path):
+    monkeypatch.setenv("AI_CLI_USER", "vibe-ai")
+    monkeypatch.setattr(ai_sandbox, "JOBS_DIR", str(tmp_path))
+    monkeypatch.setattr(ai_sandbox.pwd, "getpwnam", lambda u: type("P", (), {"pw_dir": "/home/vibe-ai"})())
+    seen = []
+
+    def run(cmd, **k):
+        if cmd[0] == "chown":
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        seen.append((cmd, k["cwd"], os.listdir(k["cwd"])))
+        return subprocess.CompletedProcess(cmd, 0, "{}", "")
+    monkeypatch.setattr(ai_sandbox.subprocess, "run", run)
+    assert ai_sandbox.agy_flags() == []
+    ai_sandbox.run(["/root/.local/bin/agy", "-p", "x"], cwd="/opt/vibe-hosting/workspaces/shop", timeout=5, env={})
+    cmd, cwd, contents = seen[0]
+    assert cmd[:4] == ["sudo", "-n", "-u", "vibe-ai"] and cmd[-3:] == ["agy", "-p", "x"]
+    assert cwd.startswith(str(tmp_path)) and contents == []  # thư mục trống, không phải workspace
+    assert os.listdir(tmp_path) == []  # đã dọn
+
+
+def test_cli_user_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("AI_CLI_USER", "0")
+    assert ai_sandbox.cli_user() is None and ai_sandbox.agy_flags() == ["--mode", "plan"]

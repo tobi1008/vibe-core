@@ -105,7 +105,7 @@ def test_session_cannot_be_used_for_another_app(sandbox):
 
 
 def test_only_cli_engines_and_one_session_per_app(sandbox):
-    with pytest.raises(agent.AgentError, match="Antigravity hoặc Claude"):
+    with pytest.raises(agent.AgentError, match="Gemini 4 Hydrogen hoặc Claude"):
         agent.start_session("shop", "be", "x", "byo:abc", "u1", sandbox["ws"], {}, [], run_async=False)
     agent._running["shop"] = "busy"
     try:

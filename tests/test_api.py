@@ -51,7 +51,7 @@ def test_valid_api_key(client):
     res = client.get("/api/ai-providers")
     assert res.status_code == 200
     body = res.json()
-    assert [p["id"] for p in body["providers"]] == ["agy", "claude"]
+    assert [p["id"] for p in body["providers"]] == ["agy", "hydrogen", "claude"]
     assert body["verifier"]["id"] == "hermes"
 
 

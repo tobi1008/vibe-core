@@ -6,7 +6,7 @@ import requests
 import shutil
 import re
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 
 import ai_credentials
@@ -37,6 +37,12 @@ AGY_MODELS = [
     "gemini-3.8-flash-high",
 ]
 FALLBACK_MODELS = AGY_MODELS
+# Gemini 4 Hydrogen (qua Antigravity CLI): engine "hydrogen". Thử medium trước, rồi high, low; lỗi hết thì lùi về Flash
+HYDROGEN_MODELS = [
+    "gemini-4-hydrogen-medium",
+    "gemini-4-hydrogen-high",
+    "gemini-4-hydrogen-low",
+]
 
 CLAUDE_MODELS = [
     "opus",
@@ -61,7 +67,7 @@ HERMES_MODELS = [
 
 # Engine được phép viết cấu hình Nixpacks/K3s. Hermes không viết cấu hình mà đóng vai
 # AI Agent kiểm tra tổng thể ở bước cuối pipeline (xem hermes_verifier.py)
-CONFIG_AI_ENGINES = ("agy", "claude")
+CONFIG_AI_ENGINES = ("agy", "hydrogen", "claude")
 
 
 def normalize_config_engine(provider: Optional[str]) -> str:
@@ -71,6 +77,8 @@ def normalize_config_engine(provider: Optional[str]) -> str:
     p = p.lower()
     if p in ["claude", "claude-code", "anthropic"]:
         return "claude"
+    if p in ["hydrogen", "gemini-4-hydrogen"]:
+        return "hydrogen"
     return "agy"
 
 
@@ -125,13 +133,14 @@ def get_agy_bin() -> str:
             return p
     return "agy"
 
-def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 75, preferred_model: Optional[str] = None) -> str:
+def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 75, preferred_model: Optional[str] = None, models: Optional[List[str]] = None) -> str:
     """
     Thực thi prompt thông qua Antigravity CLI (agy) trực tiếp trên máy chủ.
-    Tự động fallback giữa các phiên bản Gemini Flash.
+    Thử lần lượt `models` (mặc định các bản Gemini Flash), rồi tới Flash nếu là chuỗi khác.
     """
-    models_to_try = [preferred_model] if preferred_model and preferred_model in AGY_MODELS else []
-    for m in AGY_MODELS:
+    chain = list(models or AGY_MODELS) + [m for m in AGY_MODELS if models and m not in models]
+    models_to_try = [preferred_model] if preferred_model and preferred_model in chain else []
+    for m in chain:
         if m not in models_to_try:
             models_to_try.append(m)
 
@@ -163,7 +172,7 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
                 agy_bin,
                 "-p", safe_prompt,
                 "--model", model_name,
-                *ai_sandbox.AGY_SAFE_FLAGS
+                *ai_sandbox.agy_flags()
             ]
             res = ai_sandbox.run(cmd, cwd=cwd, timeout=timeout, env=custom_env)
             if res.returncode == 0 and res.stdout.strip():
@@ -186,7 +195,7 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
         cmd = [
             agy_bin,
             "-p", safe_prompt,
-            *ai_sandbox.AGY_SAFE_FLAGS
+            *ai_sandbox.agy_flags()
         ]
         res = ai_sandbox.run(cmd, cwd=cwd, timeout=timeout, env=custom_env)
         if res.returncode == 0 and res.stdout.strip():
@@ -197,11 +206,11 @@ def run_agy_prompt(prompt: str, app_name: str = "system", cwd: Optional[str] = N
 
     raise Exception(f"Tất cả các Model Antigravity đều không phản hồi: {last_err}")
 
-def run_agy_json(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 75, preferred_model: Optional[str] = None) -> dict:
+def run_agy_json(prompt: str, app_name: str = "system", cwd: Optional[str] = None, timeout: int = 75, preferred_model: Optional[str] = None, models: Optional[List[str]] = None) -> dict:
     """
     Gọi agy và bóc tách dữ liệu JSON an toàn từ kết quả trả về.
     """
-    raw_output = run_agy_prompt(prompt, app_name=app_name, cwd=cwd, timeout=timeout, preferred_model=preferred_model)
+    raw_output = run_agy_prompt(prompt, app_name=app_name, cwd=cwd, timeout=timeout, preferred_model=preferred_model, models=models)
     # Loại bỏ mã màu ANSI từ terminal nếu CLI xuất ra
     clean_text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', raw_output)
 
@@ -448,6 +457,9 @@ def call_ai_json(
     elif provider == "hermes":
         to = timeout or 90
         return run_hermes_json(prompt, app_name=app_name, timeout=to, preferred_model=preferred_model)
+    elif provider == "hydrogen":
+        to = timeout or 120
+        return run_agy_json(prompt, app_name=app_name, cwd=cwd, timeout=to, preferred_model=preferred_model, models=HYDROGEN_MODELS)
     else:
         to = timeout or 75
         return run_agy_json(prompt, app_name=app_name, cwd=cwd, timeout=to, preferred_model=preferred_model)
@@ -477,6 +489,9 @@ def call_ai_prompt(
     elif provider == "hermes":
         to = timeout or 90
         return run_hermes_prompt(prompt, app_name=app_name, timeout=to, preferred_model=preferred_model)
+    elif provider == "hydrogen":
+        to = timeout or 120
+        return run_agy_prompt(prompt, app_name=app_name, cwd=cwd, timeout=to, preferred_model=preferred_model, models=HYDROGEN_MODELS)
     else:
         to = timeout or 75
         return run_agy_prompt(prompt, app_name=app_name, cwd=cwd, timeout=to, preferred_model=preferred_model)

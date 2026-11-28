@@ -280,3 +280,14 @@ def test_call_ai_prompt_dispatch(monkeypatch, provider, target):
         monkeypatch.setattr(builder_core, name, lambda *a, _n=name, **kw: called.append(_n) or "ok")
     assert builder_core.call_ai_prompt("p", ai_provider=provider, timeout=10) == "ok"
     assert called == [target]
+
+
+def test_hydrogen_engine_tries_hydrogen_models_then_flash(monkeypatch, logs):
+    monkeypatch.setattr(builder_core, "get_agy_bin", lambda: "agy")
+    n = len(builder_core.HYDROGEN_MODELS)
+    calls = fake_subprocess(monkeypatch, [Res(1, "", "loi")] * n + [Res(0, '{"ok": true}')])
+    assert builder_core.call_ai_json("p", ai_provider="hydrogen") == {"ok": True}
+    models = [c[c.index("--model") + 1] for c in calls]
+    assert models[:n] == builder_core.HYDROGEN_MODELS and models[n] == builder_core.AGY_MODELS[0]
+    assert all("--dangerously-skip-permissions" not in c for c in calls)
+    assert builder_core.normalize_config_engine("Hydrogen") == "hydrogen"

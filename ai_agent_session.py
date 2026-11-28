@@ -31,7 +31,7 @@ import yaml
 
 import app_scope
 import package_limits
-from builder_core import AGY_MODELS, CLAUDE_MODELS, K8S_NAMESPACE, write_log
+from builder_core import AGY_MODELS, CLAUDE_MODELS, HYDROGEN_MODELS, K8S_NAMESPACE, write_log
 
 AGENT_USER = os.getenv("AI_AGENT_USER", "vibe-ai")
 JOBS_DIR = os.getenv("AI_AGENT_JOBS_DIR", "/home/vibe-ai/jobs")
@@ -43,7 +43,7 @@ MAX_DIFF_CHARS = 20000
 MAX_REPLY_CHARS = 12000
 IGNORED_DIRS = {".git", "node_modules", ".next", ".nuxt", "dist", "build", "vendor", "__pycache__", ".venv", "venv",
                 ".cache", "target", ".turbo", ".gradle", ".idea", ".vscode", "coverage"}
-CLI_BINS = {"agy": "/usr/local/bin/agy", "claude": "/usr/local/bin/claude"}
+CLI_BINS = {"agy": "/usr/local/bin/agy", "hydrogen": "/usr/local/bin/agy", "claude": "/usr/local/bin/claude"}
 
 _lock = threading.Lock()
 _running: Dict[str, str] = {}  # app -> session id đang chạy
@@ -126,7 +126,8 @@ def agent_command(engine: str, prompt: str, model: Optional[str]) -> List[str]:
     """Lệnh CLI có công cụ: chạy được vì chỉ thấy bản sao, bằng user không đặc quyền"""
     if engine == "claude":
         return [CLI_BINS["claude"], "-p", prompt, "--model", model or CLAUDE_MODELS[1], "--dangerously-skip-permissions"]
-    return [CLI_BINS["agy"], "-p", prompt, "--model", model or AGY_MODELS[1], "--dangerously-skip-permissions"]
+    default = HYDROGEN_MODELS[0] if engine == "hydrogen" else AGY_MODELS[1]
+    return [CLI_BINS["agy"], "-p", prompt, "--model", model or default, "--dangerously-skip-permissions"]
 
 
 def sandboxed(cmd: List[str], cwd: str) -> List[str]:
@@ -263,7 +264,7 @@ def start_session(app_name: str, component: str, message: str, engine: str, user
                   history: Optional[List[Dict[str, str]]] = None, model: Optional[str] = None,
                   run_async: bool = True) -> Dict[str, Any]:
     if engine not in CLI_BINS:
-        raise AgentError("Chế độ Agent chỉ hỗ trợ Google Antigravity hoặc Claude Code.")
+        raise AgentError("Chế độ Agent chỉ hỗ trợ Google Antigravity, Gemini 4 Hydrogen hoặc Claude Code.")
     if not available():
         raise AgentError(f"Máy chủ chưa có user {AGENT_USER} để chạy agent trong hộp cát.")
     if not message.strip():
