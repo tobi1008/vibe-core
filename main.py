@@ -2,6 +2,7 @@ import os
 import json
 import shutil
 import subprocess
+import threading
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional
 from fastapi import FastAPI, BackgroundTasks, Request, HTTPException, UploadFile, File, Form, Query, Depends
@@ -14,6 +15,8 @@ from cicd_core import redeploy_app
 from db_builder_core import deploy_app_with_db, deploy_fullstack_app, delete_app_db_resources
 from monorepo_builder_core import deploy_monorepo_app
 from hermes_verifier import verify_deployment, discover_workloads, load_report, revision_history
+import builder_core
+import docker_janitor
 import dockerhub_cleanup
 from fastapi.responses import JSONResponse
 from security import require_api_key, require_upload_scope, UPLOAD_TOKEN_PATHS, MAX_UPLOAD_BYTES, validate_app_name, validate_repo_url, verify_github_signature, redact_secrets, safe_upload_filename
@@ -46,12 +49,18 @@ except Exception as e:
     telegram_api = None
 
 
+_janitor_stop = threading.Event()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # Bot và giám sát chỉ chạy khi máy chủ có TELEGRAM_BOT_TOKEN
     if telegram_api:
         telegram_api.start_background_services()
+    # Dọn Docker định kỳ và khi ổ đĩa sắp đầy (máy này build image cho mọi app)
+    docker_janitor.start_background(_janitor_stop, builder_core.write_log)
     yield
+    _janitor_stop.set()
     if telegram_api:
         telegram_api.stop_background_services()
 

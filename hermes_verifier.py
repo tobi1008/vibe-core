@@ -24,7 +24,7 @@ import docker_janitor
 from builder_core import K8S_NAMESPACE, run_hermes_json
 from security import redact_secrets
 
-JANITOR_LOG = "docker-janitor"
+JANITOR_LOG = docker_janitor.LOG_NAME
 
 # Image Next.js/Node có thể vài trăm MB tới hơn 1GB, lần đầu K3s kéo image mất vài phút
 ROLLOUT_TIMEOUT = int(os.getenv("VERIFY_ROLLOUT_TIMEOUT", "600"))

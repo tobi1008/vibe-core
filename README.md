@@ -241,6 +241,8 @@ curl -X POST -H "X-API-Key: $VIBE_API_KEY" -H "Content-Type: application/json" \
 
 Sau mỗi pipeline (thành công hay thất bại), `docker_janitor.py` chạy nền `docker builder prune --max-used-space 5gb` (giữ build cache tối đa 5 GB để build sau vẫn nhanh) và `docker image prune -a --filter until=2h` (xóa image không container nào dùng và đã tạo quá 2 giờ; image đã nằm trên Docker Hub, ngưỡng thời gian tránh xóa image của pipeline khác đang build dở). Hai lượt dọn không chạy chồng nhau. Kết quả ghi ở log `docker-janitor`.
 
+Ngoài ra API chạy một luồng nền làm lưới an toàn: khi khởi động và mỗi 6 giờ dọn như trên; mỗi 5 phút đo ổ đĩa, vượt 80% thì dọn mạnh (chỉ giữ 1 GB build cache, tối đa 1 lần/giờ).
+
 ### File Manager và Git (prefix `/api/project`)
 
 | Method | Endpoint | Mô tả |
@@ -347,6 +349,9 @@ Tạo file `.env` trong thư mục gốc của dự án. File này đã nằm tr
 | `DOCKERHUB_GRACE_HOURS` | Không | Bỏ qua repo / tag vừa cập nhật trong số giờ này (pipeline có thể đang push). Mặc định `1`. |
 | `DOCKER_JANITOR` | Không | Đặt `0` để tắt tự dọn Docker sau mỗi lần build. |
 | `DOCKER_BUILD_CACHE_MAX` | Không | Dung lượng build cache tối đa giữ lại. Mặc định `5gb`. |
+| `DOCKER_JANITOR_INTERVAL` | Không | Chu kỳ dọn định kỳ (giờ). Mặc định `6`. |
+| `DOCKER_JANITOR_DISK_PCT` | Không | Ổ đĩa vượt mức này (%) thì dọn mạnh. Mặc định `80`. |
+| `DOCKER_BUILD_CACHE_MIN` | Không | Build cache giữ lại khi dọn mạnh. Mặc định `1gb`. |
 | `DOCKER_IMAGE_MAX_AGE` | Không | Chỉ xóa image local tạo trước khoảng này. Mặc định `2h`. |
 | `HERMES_API_URL` | Không | Endpoint của Hermes. Mặc định `http://127.0.0.1:8645/v1/chat/completions`. |
 | `INTERNAL_BEARER_TOKEN` | Không | Bearer token gửi tới Hermes. |
